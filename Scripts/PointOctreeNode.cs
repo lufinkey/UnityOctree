@@ -6,6 +6,13 @@ using UnityEngine.Assertions;
 
 namespace Octrees
 {
+	public struct ItemInfoWithDistance<T>
+	{
+		public float distance;
+		public Vector3 position;
+		public T obj;
+	}
+	
 	// A node in a PointOctree
 	// Copyright 2014 Nition, BSD licence (see LICENCE file). www.momentstudio.co.nz
 	public class PointOctreeNode<T> {
@@ -194,6 +201,39 @@ namespace Octrees
 			if (children != null) {
 				for (int i = 0; i < 8; i++) {
 					children[i].GetNearby(ref position, maxDistance, result);
+				}
+			}
+		}
+		
+		public void GetNearbyWithDistances(ref Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> result) {
+			float sqrMaxDistance = maxDistance * maxDistance;
+
+			if (CheckSphereIntersection(position, maxDistance))
+				return;
+	
+			// Check against any objects in this node
+			for (int i = 0; i < objects.Count; i++)
+			{
+				ItemInfoWithDistance<T> t;
+				Vector3 position1 = objects[i].Pos; 
+				float distance = (position - position1).sqrMagnitude;
+				if (distance <= sqrMaxDistance)
+				{
+					result.Add(new()
+					{
+						position = position1,
+						distance = distance,
+						obj = objects[i].Obj,
+					});
+				}
+			}
+	
+			// Check children
+			if (children != null)
+			{
+				for (int i = 0; i < 8; i++)
+				{
+					children[i].GetNearbyWithDistances(ref position, maxDistance, result);
 				}
 			}
 		}

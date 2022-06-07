@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Assertions;
 
 namespace Octrees
 {
@@ -159,25 +160,55 @@ namespace Octrees
 			rootNode.GetNearby(ref position, maxDistance, collidingWith);
 			return collidingWith.ToArray();
 		}
-		
+
+		public void GetNearbyWithDistances(Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> output)
+		{
+			rootNode.GetNearbyWithDistances(ref position, maxDistance, output);
+		}
 		
 		// A stupid temp implementation of this thing.
-		public void GetNearbyN(Vector3 position, List<T> output, int desiredCount, float startingDistance)
+		public void GetNearbyN(Vector3 position, List<ItemInfoWithDistance<T>> output, int desiredCount, float startingDistance)
 		{
 			if (Count <= desiredCount)
-			{
-				rootNode.GetAll(output);
 				return;
-			}
 			
 			float maxDistance = startingDistance;
 			while (true)
 			{
-				GetNearbyNonAlloc(position, maxDistance, output);
+				GetNearbyWithDistances(position, maxDistance, output);
 				if (output.Count >= desiredCount)
+					break;
+				maxDistance += startingDistance;
+				Debug.Log("Another iteration");
+			}
+		}
+		
+		// A stupid temp implementation of this thing.
+		public T GetClosest(Vector3 position, List<ItemInfoWithDistance<T>> cache, float startingDistance)
+		{
+			Assert.IsTrue(Count > 0);
+			float maxDistance = startingDistance;
+			while (true)
+			{
+				GetNearbyWithDistances(position, maxDistance, cache);
+				if (cache.Count > 0)
 					break;
 				maxDistance *= 2;
 			}
+
+			int minIndex = -1;
+			float minDistance = float.PositiveInfinity;
+			for (int i = 0; i < cache.Count; i++)
+			{
+				float dist = cache[i].distance;
+				if (dist < minDistance)
+				{
+					minIndex = i;
+					minDistance = dist;
+				}
+			}
+
+			return cache[minIndex].obj;
 		}
 
 		/// <summary>
