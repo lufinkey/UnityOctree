@@ -1,6 +1,8 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.Assertions;
 
 namespace Octrees
 {
@@ -146,6 +148,27 @@ namespace Octrees
 				}
 			}
 		}
+
+		private bool CheckSphereIntersection(Vector3 position, float sqrMaxDistance)
+		{
+#if UNITY_2017_1_OR_NEWER
+			// Does the node intersect with the sphere of center = position and radius = maxDistance?
+			if ((bounds.ClosestPoint(position) - position).sqrMagnitude > sqrMaxDistance) {
+				return true;
+			}
+#else
+			// Does the ray hit this node at all?
+			// Note: Expanding the bounds is not exactly the same as a real distance check, but it's fast
+			// TODO: Does someone have a fast AND accurate formula to do this check?
+			bounds.Expand(new Vector3(maxDistance * 2, maxDistance * 2, maxDistance * 2));
+			bool contained = bounds.Contains(position);
+			bounds.size = actualBoundsSize;
+			if (!contained) {
+				return true;
+			}
+#endif
+			return false;
+		}
 	
 		/// <summary>
 		/// Return objects that are within <paramref name="maxDistance"/> of the specified position.
@@ -156,23 +179,9 @@ namespace Octrees
 		/// <returns>Objects within range.</returns>
 		public void GetNearby(ref Vector3 position, float maxDistance, List<T> result) {
 			float sqrMaxDistance = maxDistance * maxDistance;
-	
-	#if UNITY_2017_1_OR_NEWER
-			// Does the node intersect with the sphere of center = position and radius = maxDistance?
-			if ((bounds.ClosestPoint(position) - position).sqrMagnitude > sqrMaxDistance) {
+
+			if (CheckSphereIntersection(position, maxDistance))
 				return;
-			}
-	#else
-			// Does the ray hit this node at all?
-			// Note: Expanding the bounds is not exactly the same as a real distance check, but it's fast
-			// TODO: Does someone have a fast AND accurate formula to do this check?
-			bounds.Expand(new Vector3(maxDistance * 2, maxDistance * 2, maxDistance * 2));
-			bool contained = bounds.Contains(position);
-			bounds.size = actualBoundsSize;
-			if (!contained) {
-				return;
-			}
-	#endif
 	
 			// Check against any objects in this node
 			for (int i = 0; i < objects.Count; i++) {

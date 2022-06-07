@@ -159,6 +159,26 @@ namespace Octrees
 			rootNode.GetNearby(ref position, maxDistance, collidingWith);
 			return collidingWith.ToArray();
 		}
+		
+		
+		// A stupid temp implementation of this thing.
+		public void GetNearbyN(Vector3 position, List<T> output, int desiredCount, float startingDistance)
+		{
+			if (Count <= desiredCount)
+			{
+				rootNode.GetAll(output);
+				return;
+			}
+			
+			float maxDistance = startingDistance;
+			while (true)
+			{
+				GetNearbyNonAlloc(position, maxDistance, output);
+				if (output.Count >= desiredCount)
+					break;
+				maxDistance *= 2;
+			}
+		}
 
 		/// <summary>
 		/// Returns objects that are within <paramref name="maxDistance"/> of the specified position.
