@@ -1,0 +1,14 @@
+{
+	"name": "com.nition.unityoctree",
+	"version": "0.0.1",
+	"displayName": "Unity Octree",
+	"description": "A dynamic, loose octree implementation for Unity written in C#",
+	"unity": "2019.4",
+	"unityRelease": "40f1",
+	"dependencies": {},
+	"keywords": [],
+	"author": {
+		"name": "Nitrion",
+		"url": "http://nition.momentstudio.co.nz"
+	}
+}
