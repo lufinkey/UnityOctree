@@ -184,9 +184,12 @@ namespace Octrees
 		}
 		
 		// A stupid temp implementation of this thing.
-		public T GetClosest(Vector3 position, List<ItemInfoWithDistance<T>> cache, float startingDistance)
+		public T GetClosest(Vector3 position, float startingDistance, List<ItemInfoWithDistance<T>> cache = null)
 		{
 			Assert.IsTrue(Count > 0);
+			if (cache == null) {
+				cache = new List<ItemInfoWithDistance<T>>();
+			}
 			float maxDistance = startingDistance;
 			while (true)
 			{
