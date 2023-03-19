@@ -183,8 +183,34 @@ namespace Octrees
 		/// <param name="position">The position.</param>
 		/// <param name="maxDistance">Maximum distance from the position to consider.</param>
 		/// <param name="result">List result.</param>
+		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>Objects within range.</returns>
-		public void GetNearby(ref Vector3 position, float maxDistance, List<T> result) {
+		public void GetNearby(in Vector3 position, float maxDistance, List<T> result, System.Predicate<T> filter) {
+			float sqrMaxDistance = maxDistance * maxDistance;
+			
+			if (CheckSphereIntersection(position, maxDistance))
+				return;
+			
+			// Check against any objects in this node
+			for (int i = 0; i < objects.Count; i++) {
+				var obj = objects[i];
+				if (filter != null && !filter(obj.Obj)) {
+					continue;
+				}
+				if ((position - obj.Pos).sqrMagnitude <= sqrMaxDistance) {
+					result.Add(obj.Obj);
+				}
+			}
+			
+			// Check children
+			if (children != null) {
+				for (int i = 0; i < 8; i++) {
+					children[i].GetNearby(position, maxDistance, result, filter);
+				}
+			}
+		}
+		
+		public void GetNearbyWithDistances(ref Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> result, System.Predicate<T> filter) {
 			float sqrMaxDistance = maxDistance * maxDistance;
 
 			if (CheckSphereIntersection(position, maxDistance))
@@ -192,30 +218,12 @@ namespace Octrees
 	
 			// Check against any objects in this node
 			for (int i = 0; i < objects.Count; i++) {
-				if ((position - objects[i].Pos).sqrMagnitude <= sqrMaxDistance) {
-					result.Add(objects[i].Obj);
+				var obj = objects[i];
+				if (filter != null && !filter(obj.Obj)) {
+					continue;
 				}
-			}
-	
-			// Check children
-			if (children != null) {
-				for (int i = 0; i < 8; i++) {
-					children[i].GetNearby(ref position, maxDistance, result);
-				}
-			}
-		}
-		
-		public void GetNearbyWithDistances(ref Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> result) {
-			float sqrMaxDistance = maxDistance * maxDistance;
-
-			if (CheckSphereIntersection(position, maxDistance))
-				return;
-	
-			// Check against any objects in this node
-			for (int i = 0; i < objects.Count; i++)
-			{
 				ItemInfoWithDistance<T> t;
-				Vector3 position1 = objects[i].Pos; 
+				Vector3 position1 = obj.Pos; 
 				float distance = (position - position1).sqrMagnitude;
 				if (distance <= sqrMaxDistance)
 				{
@@ -233,7 +241,7 @@ namespace Octrees
 			{
 				for (int i = 0; i < 8; i++)
 				{
-					children[i].GetNearbyWithDistances(ref position, maxDistance, result);
+					children[i].GetNearbyWithDistances(ref position, maxDistance, result, filter);
 				}
 			}
 		}

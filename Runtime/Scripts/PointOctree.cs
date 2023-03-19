@@ -151,19 +151,20 @@ namespace Octrees
 		/// Returns objects that are within <paramref name="maxDistance"/> of the specified position.
 		/// If none, returns an empty array (not null).
 		/// </summary>
-		/// <param name="position">The position. Passing as ref to improve performance since it won't have to be copied.</param>
+		/// <param name="position">The position to compare distances with</param>
 		/// <param name="maxDistance">Maximum distance from the position to consider.</param>
+		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>Objects within range.</returns>
-		public T[] GetNearby(Vector3 position, float maxDistance)
+		public T[] GetNearby(in Vector3 position, float maxDistance, System.Predicate<T> filter = null)
 		{
 			List<T> collidingWith = new List<T>();
-			rootNode.GetNearby(ref position, maxDistance, collidingWith);
+			rootNode.GetNearby(position, maxDistance, collidingWith, filter);
 			return collidingWith.ToArray();
 		}
 
-		public void GetNearbyWithDistances(Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> output)
+		public void GetNearbyWithDistances(Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> output, System.Predicate<T> filter = null)
 		{
-			rootNode.GetNearbyWithDistances(ref position, maxDistance, output);
+			rootNode.GetNearbyWithDistances(ref position, maxDistance, output, filter);
 		}
 		
 		// A stupid temp implementation of this thing.
@@ -218,13 +219,15 @@ namespace Octrees
 		/// Returns objects that are within <paramref name="maxDistance"/> of the specified position.
 		/// If none, returns false. Uses supplied list for results.
 		/// </summary>
+		/// <param name="position">The position to compare distances with</param>
 		/// <param name="maxDistance">Maximum distance from the position to consider</param>
 		/// <param name="nearBy">Pre-initialized list to populate</param>
+		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>True if items are found, false if not</returns>
-		public bool GetNearbyNonAlloc(Vector3 position, float maxDistance, List<T> nearBy)
+		public bool GetNearbyNonAlloc(in Vector3 position, float maxDistance, List<T> nearBy, System.Predicate<T> filter = null)
 		{
 			nearBy.Clear();
-			rootNode.GetNearby(ref position, maxDistance, nearBy);
+			rootNode.GetNearby(position, maxDistance, nearBy, filter);
 			if (nearBy.Count > 0)
 				return true;
 			return false;
