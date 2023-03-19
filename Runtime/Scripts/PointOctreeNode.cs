@@ -43,9 +43,6 @@ namespace Octrees
 		// A generally good number seems to be something around 8-15
 		const int NUM_OBJECTS_ALLOWED = 8;
 	
-		// For reverting the bounds size after temporary changes
-		Vector3 actualBoundsSize;
-	
 		// An object in the octree
 		class OctreeObject {
 			public T Obj;
@@ -135,9 +132,15 @@ namespace Octrees
 			// Does the ray hit this node at all?
 			// Note: Expanding the bounds is not exactly the same as a real distance check, but it's fast.
 			// TODO: Does someone have a fast AND accurate formula to do this check?
-			bounds.Expand(new Vector3(maxDistance * 2, maxDistance * 2, maxDistance * 2));
-			bool intersected = bounds.IntersectRay(ray);
-			bounds.size = actualBoundsSize;
+			var originalBoundsValue = bounds;
+			bool intersected;
+			try {
+				bounds.Expand(new Vector3(maxDistance * 2, maxDistance * 2, maxDistance * 2));
+				intersected = bounds.IntersectRay(ray);
+			}
+			finally {
+				bounds = originalBoundsValue;
+			}
 			if (!intersected) {
 				return;
 			}
@@ -440,8 +443,8 @@ namespace Octrees
 			Center = centerVal;
 	
 			// Create the bounding box.
-			actualBoundsSize = new Vector3(SideLength, SideLength, SideLength);
-			bounds = new Bounds(Center, actualBoundsSize);
+			var boundsSize = new Vector3(SideLength, SideLength, SideLength);
+			bounds = new Bounds(Center, boundsSize);
 	
 			float quarter = SideLength / 4f;
 			float childActualLength = SideLength / 2;
