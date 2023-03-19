@@ -164,9 +164,9 @@ namespace Octrees
 			return collidingWith.ToArray();
 		}
 
-		public void GetNearbyWithDistances(Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> output, System.Predicate<T> filter = null)
+		public void GetNearbyWithDistances(in Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> output, System.Predicate<T> filter = null)
 		{
-			rootNode.GetNearbyWithDistances(ref position, maxDistance, output, filter);
+			rootNode.GetNearbyWithDistances(position, maxDistance, output, filter);
 		}
 		
 		// A stupid temp implementation of this thing.
@@ -187,7 +187,7 @@ namespace Octrees
 		}
 		
 		// A stupid temp implementation of this thing.
-		public T GetClosest(Vector3 position, float startingDistance, List<ItemInfoWithDistance<T>> cache = null)
+		public T GetClosest(in Vector3 position, float startingDistance, List<ItemInfoWithDistance<T>> cache = null)
 		{
 			Assert.IsTrue(Count > 0);
 			if (cache == null) {

@@ -132,15 +132,9 @@ namespace Octrees
 			// Does the ray hit this node at all?
 			// Note: Expanding the bounds is not exactly the same as a real distance check, but it's fast.
 			// TODO: Does someone have a fast AND accurate formula to do this check?
-			var originalBoundsValue = bounds;
-			bool intersected;
-			try {
-				bounds.Expand(new Vector3(maxDistance * 2, maxDistance * 2, maxDistance * 2));
-				intersected = bounds.IntersectRay(ray);
-			}
-			finally {
-				bounds = originalBoundsValue;
-			}
+			var adjustedBounds = bounds;
+			adjustedBounds.Expand(new Vector3(maxDistance * 2, maxDistance * 2, maxDistance * 2));
+			bool intersected = adjustedBounds.IntersectRay(ray);
 			if (!intersected) {
 				return;
 			}
@@ -218,7 +212,7 @@ namespace Octrees
 			}
 		}
 		
-		public void GetNearbyWithDistances(ref Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> result, System.Predicate<T> filter) {
+		public void GetNearbyWithDistances(in Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> result, System.Predicate<T> filter) {
 			float sqrMaxDistance = maxDistance * maxDistance;
 
 			if (CheckSphereIntersection(position, maxDistance))
@@ -249,7 +243,7 @@ namespace Octrees
 			{
 				for (int i = 0; i < 8; i++)
 				{
-					children[i].GetNearbyWithDistances(ref position, maxDistance, result, filter);
+					children[i].GetNearbyWithDistances(position, maxDistance, result, filter);
 				}
 			}
 		}
