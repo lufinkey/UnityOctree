@@ -123,11 +123,12 @@ namespace Octrees
 		/// <param name="ray">The ray. Passing as ref to improve performance since it won't have to be copied.</param>
 		/// <param name="maxDistance">Maximum distance from the ray to consider</param>
 		/// <param name="nearBy">Pre-initialized list to populate</param>
+		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>True if items are found, false if not</returns>
-		public bool GetNearbyNonAlloc(Ray ray, float maxDistance, List<T> nearBy)
+		public bool GetNearbyNonAlloc(Ray ray, float maxDistance, List<T> nearBy, System.Predicate<T> filter = null)
 		{
 			nearBy.Clear();
-			rootNode.GetNearby(ref ray, maxDistance, nearBy);
+			rootNode.GetNearby(ref ray, maxDistance, nearBy, filter);
 			if (nearBy.Count > 0)
 				return true;
 			return false;
@@ -139,11 +140,12 @@ namespace Octrees
 		/// </summary>
 		/// <param name="ray">The ray. Passing as ref to improve performance since it won't have to be copied.</param>
 		/// <param name="maxDistance">Maximum distance from the ray to consider.</param>
+		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>Objects within range.</returns>
-		public T[] GetNearby(Ray ray, float maxDistance)
+		public T[] GetNearby(Ray ray, float maxDistance, System.Predicate<T> filter = null)
 		{
 			List<T> collidingWith = new List<T>();
-			rootNode.GetNearby(ref ray, maxDistance, collidingWith);
+			rootNode.GetNearby(ref ray, maxDistance, collidingWith, filter);
 			return collidingWith.ToArray();
 		}
 

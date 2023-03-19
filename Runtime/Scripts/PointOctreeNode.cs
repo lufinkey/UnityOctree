@@ -129,8 +129,9 @@ namespace Octrees
 		/// <param name="ray">The ray.</param>
 		/// <param name="maxDistance">Maximum distance from the ray to consider.</param>
 		/// <param name="result">List result.</param>
+		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>Objects within range.</returns>
-		public void GetNearby(ref Ray ray, float maxDistance, List<T> result) {
+		public void GetNearby(ref Ray ray, float maxDistance, List<T> result, System.Predicate<T> filter) {
 			// Does the ray hit this node at all?
 			// Note: Expanding the bounds is not exactly the same as a real distance check, but it's fast.
 			// TODO: Does someone have a fast AND accurate formula to do this check?
@@ -143,15 +144,19 @@ namespace Octrees
 	
 			// Check against any objects in this node
 			for (int i = 0; i < objects.Count; i++) {
-				if (SqrDistanceToRay(ray, objects[i].Pos) <= (maxDistance * maxDistance)) {
-					result.Add(objects[i].Obj);
+				var obj = objects[i];
+				if (filter != null && !filter(obj.Obj)) {
+					continue;
+				}
+				if (SqrDistanceToRay(ray, obj.Pos) <= (maxDistance * maxDistance)) {
+					result.Add(obj.Obj);
 				}
 			}
 	
 			// Check children
 			if (children != null) {
 				for (int i = 0; i < 8; i++) {
-					children[i].GetNearby(ref ray, maxDistance, result);
+					children[i].GetNearby(ref ray, maxDistance, result, filter);
 				}
 			}
 		}
