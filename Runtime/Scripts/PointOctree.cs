@@ -120,15 +120,15 @@ namespace Octrees
 		/// Returns objects that are within <paramref name="maxDistance"/> of the specified ray.
 		/// If none, returns false. Uses supplied list for results.
 		/// </summary>
-		/// <param name="ray">The ray. Passing as ref to improve performance since it won't have to be copied.</param>
+		/// <param name="ray">The ray to compare distance to</param>
 		/// <param name="maxDistance">Maximum distance from the ray to consider</param>
 		/// <param name="nearBy">Pre-initialized list to populate</param>
 		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>True if items are found, false if not</returns>
-		public bool GetNearbyNonAlloc(Ray ray, float maxDistance, List<T> nearBy, System.Predicate<T> filter = null)
+		public bool GetNearbyNonAlloc(in Ray ray, float maxDistance, List<T> nearBy, System.Predicate<T> filter = null)
 		{
 			nearBy.Clear();
-			rootNode.GetNearby(ref ray, maxDistance, nearBy, filter);
+			rootNode.GetNearby(ray, maxDistance, nearBy, filter);
 			if (nearBy.Count > 0)
 				return true;
 			return false;
@@ -138,14 +138,14 @@ namespace Octrees
 		/// Returns objects that are within <paramref name="maxDistance"/> of the specified ray.
 		/// If none, returns an empty array (not null).
 		/// </summary>
-		/// <param name="ray">The ray. Passing as ref to improve performance since it won't have to be copied.</param>
+		/// <param name="ray">The ray to compare distance to</param>
 		/// <param name="maxDistance">Maximum distance from the ray to consider.</param>
 		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>Objects within range.</returns>
-		public T[] GetNearby(Ray ray, float maxDistance, System.Predicate<T> filter = null)
+		public T[] GetNearby(in Ray ray, float maxDistance, System.Predicate<T> filter = null)
 		{
 			List<T> collidingWith = new List<T>();
-			rootNode.GetNearby(ref ray, maxDistance, collidingWith, filter);
+			rootNode.GetNearby(ray, maxDistance, collidingWith, filter);
 			return collidingWith.ToArray();
 		}
 
