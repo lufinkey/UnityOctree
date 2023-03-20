@@ -249,23 +249,23 @@ namespace Octrees
 		}
 		
 		
+		public delegate bool IsBoundsVisible(Bounds bounds);
+		public delegate bool TryGetPointDistanceMethod(Vector3 point, out float distance);
+		
 		/// <summary>
-		/// Finds the object in the octree that lies in the given direction and has the closest 2D distance (in terms of the given viewing angle) to the given origin.
+		/// Finds the closest object in the octree using a given visibility and distance calculation method
 		/// </summary>
-		/// <param name="origin">The origin point that the 2D distance will be compared against</param>
-		/// <param name="direction2D">The 2D direction that the found object should lie in</param>
-		/// <param name="minDotProduct2D">The minimum dot product allowed from an object's offset from the given ray origin (in 2D)</param>
-		/// <param name="worldToView"> Converts a world offset to a view offset</param>
-		/// <param name="nearClippingPlane">Ensure any found points are in front of this plane</param>
-		/// <param name="filter">Filter function to allow or ignore certain objects in the Octree</param>
+		/// <param name="getPointDistance">Calculates the distance to the given point</param>
+		/// <param name="isBoundsVisible">Calculates if the given bounds are visible to this search</param>
+		/// <param name="filter">An optional filter method to only include certain objects</param>
 		/// <param name="closestObj">The closest object found in the Octree, or `default` if not found</param>
-		/// <param name="closestSqrDistance2D">The square distance of the closest object to the origin (in 2D view space)</param>
+		/// <param name="closestDistance">The square distance of the closest object to the origin (in 2D view space)</param>
 		/// <returns>true if an object could be found, false otherwise</returns>
-		public bool FindClosestInDirection2D(Vector3 origin, Vector2 direction2D, float minDotProduct2D, Quaternion worldToView, Plane? nearClippingPlane, System.Predicate<T> filter, out T closestObj, out float closestSqrDistance2D) {
+		public bool FindClosest(TryGetPointDistanceMethod getPointDistance, IsBoundsVisible isBoundsVisible, System.Predicate<T> filter, out T closestObj, out float closestDistance) {
 			bool foundObj = false;
 			closestObj = default;
-			closestSqrDistance2D = float.MaxValue;
-			if (!IsBoundsInView(origin, direction2D, bounds, minDotProduct2D, worldToView, nearClippingPlane)) {
+			closestDistance = float.MaxValue;
+			if (!isBoundsVisible(bounds)) {
 				return false;
 			}
 			// Check against any objects in this node
@@ -274,31 +274,22 @@ namespace Octrees
 				if (filter != null && !filter(obj.Obj)) {
 					continue;
 				}
-				// ensure point is in front of clipping plane
-				if (nearClippingPlane != null && nearClippingPlane.Value.GetDistanceToPoint(obj.Pos) <= 0) {
+				if (!getPointDistance(obj.Pos, out float objDistance)) {
 					continue;
 				}
-				// get object offset
-				Vector3 objOffset = worldToView * (obj.Pos - origin);
-				var objOffset2D = new Vector2(objOffset.x, objOffset.y);
-				float objOffsetDot = Vector2.Dot(direction2D, objOffset2D.normalized);
-				if (objOffsetDot < minDotProduct2D) {
-					continue;
-				}
-				float sqrDistance = objOffset2D.sqrMagnitude;
-				if (!foundObj || sqrDistance <= closestSqrDistance2D) {
+				if (!foundObj || objDistance <= closestDistance) {
 					closestObj = obj.Obj;
-					closestSqrDistance2D = sqrDistance;
+					closestDistance = objDistance;
 					foundObj = true;
 				}
 			}
 			// Check children
 			if (children != null) {
 				for (int i = 0; i < 8; i++) {
-					if (children[i].FindClosestInDirection2D(origin, direction2D, minDotProduct2D, worldToView, nearClippingPlane, filter, out T closestChild, out float childObjSqrDistance)) {
-						if (!foundObj || childObjSqrDistance < closestSqrDistance2D) {
+					if (children[i].FindClosest(getPointDistance, isBoundsVisible, filter, out T closestChild, out float childDistance)) {
+						if (!foundObj || childDistance < closestDistance) {
 							closestObj = closestChild;
-							closestSqrDistance2D = childObjSqrDistance;
+							closestDistance = childDistance;
 							foundObj = true;
 						}
 					}
@@ -306,34 +297,8 @@ namespace Octrees
 			}
 			return foundObj;
 		}
-		
-		private static bool IsBoundsInView(Vector3 origin, Vector2 direction2D, Bounds bounds, float minDotProduct2D, Quaternion worldToView, Plane? nearClippingPlane) {
-			foreach (var cornerPoint in GetBoundsPoints(bounds)) {
-				var cornerDirection = (worldToView * (cornerPoint - origin));
-				var cornerDirection2D = new Vector2(cornerDirection.x, cornerDirection.y);
-				float dotProduct = Vector2.Dot(direction2D, cornerDirection2D.normalized);
-				if (dotProduct >= minDotProduct2D && (nearClippingPlane == null || nearClippingPlane.Value.GetDistanceToPoint(cornerPoint) > 0)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		
-		private static IEnumerable<Vector3> GetBoundsPoints(Bounds bounds) {
-			Vector3 min = bounds.min;
-			Vector3 max = bounds.max;
-			yield return new Vector3(min.x, min.y, min.z);
-			yield return new Vector3(min.x, min.y, max.z);
-			yield return new Vector3(min.x, max.y, min.z);
-			yield return new Vector3(min.x, max.y, max.z);
-			yield return new Vector3(max.x, min.y, min.z);
-			yield return new Vector3(max.x, min.y, max.z);
-			yield return new Vector3(max.x, max.y, min.z);
-			yield return new Vector3(max.x, max.y, max.z);
-			yield return bounds.center;
-		}
-		
-	
+
+
 		/// <summary>
 		/// Return all objects in the tree.
 		/// </summary>

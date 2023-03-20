@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.Assertions;
 
@@ -236,19 +237,171 @@ namespace Octrees
 		}
 		
 		/// <summary>
-		/// Finds the object in the octree that lies in the given direction and has the closest 2D distance (in terms of the given viewing angle) to the given origin.
+		/// Finds the closest object in the octree using a given visibility and distance calculation method
 		/// </summary>
-		/// <param name="origin">The origin point that the 2D distance will be compared against</param>
-		/// <param name="direction2D">The 2D direction that the found object should lie in</param>
-		/// <param name="minDotProduct2D">The minimum dot product allowed from an object's offset from the given ray origin (in 2D)</param>
-		/// <param name="worldToView"> Converts a world offset to a view offset</param>
-		/// <param name="nearClippingPlane">Ensure any found points are in front of this plane</param>
-		/// <param name="filter">Filter function to allow or ignore certain objects in the Octree</param>
+		/// <param name="getPointDistance">Calculates the distance to the given point</param>
+		/// <param name="isBoundsVisible">Calculates if the given bounds are visible to this search</param>
+		/// <param name="filter">An optional filter method to only include certain objects</param>
 		/// <param name="closestObj">The closest object found in the Octree, or `default` if not found</param>
-		/// <param name="closestSqrDistance2D">The square distance of the closest object to the origin (in 2D view space)</param>
+		/// <param name="closestDistance">The square distance of the closest object to the origin (in 2D view space)</param>
 		/// <returns>true if an object could be found, false otherwise</returns>
-		public bool FindClosestInDirection2D(Vector3 origin, Vector2 direction2D, float minDotProduct2D, Quaternion worldToView, Plane? nearClippingPlane, System.Predicate<T> filter, out T closestObj, out float closestSqrDistance2D) {
-			return rootNode.FindClosestInDirection2D(origin, direction2D.normalized, minDotProduct2D, worldToView, nearClippingPlane, filter, out closestObj, out closestSqrDistance2D);
+		public bool FindClosest(PointOctreeNode<T>.TryGetPointDistanceMethod getPointDistance, PointOctreeNode<T>.IsBoundsVisible isBoundsVisible, System.Predicate<T> filter, out T closestObj, out float closestDistance) {
+			return rootNode.FindClosest(getPointDistance, isBoundsVisible, filter, out closestObj, out closestDistance);
+		}
+		
+		/// <summary>
+		/// Finds the closest point in the given view direction
+		/// </summary>
+		/// <param name="origin">A tree position to compare against</param>
+		/// <param name="viewDirection">The view direction to check in</param>
+		/// <param name="minDotProduct">The minimum allowed dot product between the direction from the origin to an object and the view direction</param>
+		/// <param name="treeToWorld">Converts a tree position to a world position</param>
+		/// <param name="camera">The camera viewing the points</param>
+		/// <param name="filter">An optional filter method to only include certain objects</param>
+		/// <param name="closestObj">The closest object found in the Octree, or `default` if not found</param>
+		/// <param name="closestDistance">The square distance of the closest object to the origin (in 2D view space)</param>
+		/// <returns>true if an object could be found, false otherwise</returns>
+		public bool FindClosestInViewDirection(Vector3 origin, Vector2 viewDirection, float minDotProduct, System.Func<Vector3,Vector3> treeToWorld, Camera camera, System.Predicate<T> filter, out T closestObj, out float closestDistance) {
+			var cameraViewportRect = new Rect(0, 0, 1, 1);
+			viewDirection = viewDirection.normalized;
+			var originInViewport = camera.WorldToViewportPoint(treeToWorld?.Invoke(origin) ?? origin);
+			var originInViewport2D = new Vector2(originInViewport.x, originInViewport.y);
+			PointOctreeNode<T>.TryGetPointDistanceMethod getPointDistance = (Vector3 objTreePoint, out float distance) => {
+				var viewportPoint = camera.WorldToViewportPoint(treeToWorld?.Invoke(objTreePoint) ?? objTreePoint);
+				if (viewportPoint.z <= 0 || viewportPoint.x < 0 || viewportPoint.x > 1 || viewportPoint.y < 0 || viewportPoint.y > 1) {
+					distance = float.MaxValue;
+					return false;
+				}
+				var pointDirection = (viewportPoint - originInViewport);
+				var pointDirection2D = new Vector2(pointDirection.x, pointDirection.y);
+				float dotProduct = Vector2.Dot(viewDirection, pointDirection2D.normalized);
+				if (dotProduct < minDotProduct) {
+					distance = float.MaxValue;
+					return false;
+				}
+				distance = pointDirection2D.sqrMagnitude;
+				return true;
+			};
+			PointOctreeNode<T>.IsBoundsVisible isBoundsVisible = (Bounds bounds) => {
+				var boundsInViewport = GetBoundsViewportBounds(bounds, camera, treeToWorld);
+				var viewportBoundsMin = boundsInViewport.min;
+				var viewportBoundsMax = boundsInViewport.max;
+				if (viewportBoundsMin.z <= 0 && viewportBoundsMax.z <= 0) {
+					return false;
+				}
+				var rectInViewport = Rect.MinMaxRect(viewportBoundsMin.x, viewportBoundsMin.y, viewportBoundsMax.x, viewportBoundsMax.y);
+				if (!cameraViewportRect.Overlaps(rectInViewport)) {
+					return false;
+				}
+				if (rectInViewport.Contains(originInViewport2D)) {
+					return true;
+				}
+				var closestPoint = GetClosestEdgePoint(rectInViewport, origin);
+				var pointDirection2D = (closestPoint - originInViewport2D);
+				float dotProduct = Vector2.Dot(viewDirection, pointDirection2D.normalized);
+				if (dotProduct >= minDotProduct) {
+					return true;
+				}
+				foreach (var point2D in GetRectPoints(rectInViewport)) {
+					pointDirection2D = (point2D - originInViewport2D);
+					dotProduct = Vector2.Dot(viewDirection, pointDirection2D.normalized);
+					if (dotProduct >= minDotProduct) {
+						return true;
+					}
+				}
+				return false;
+			};
+			return FindClosest(getPointDistance, isBoundsVisible, filter, out closestObj, out closestDistance);
+		}
+		
+		public static IEnumerable<Vector2> GetRectPoints(Rect rect) {
+			Vector2 min = rect.min;
+			Vector2 max = rect.max;
+			Vector2 topLeft = min;
+			Vector2 topRight = new Vector2(max.x, min.y);
+			Vector2 bottomLeft = new Vector2(min.x, max.y);
+			Vector2 bottomRight = max;
+			
+			yield return topLeft; // Top left corner
+			yield return topRight; // Top right corner
+			yield return bottomLeft; // Bottom left corner
+			yield return bottomRight; // Bottom right corner
+			yield return rect.center;
+		}
+		
+		public static Vector2 GetClosestEdgePoint(Rect rect, Vector2 point) {
+			float minX = rect.xMin;
+			float minY = rect.yMin;
+			float maxX = rect.xMax;
+			float maxY = rect.yMax;
+			
+			// Clamp the point to the rectangle bounds
+			Vector2 clampedPoint = new Vector2(Mathf.Clamp(point.x, minX, maxX), Mathf.Clamp(point.y, minY, maxY));
+			
+			// Calculate the distance from the clamped point to each edge of the rectangle
+			float distToLeft = Mathf.Abs(minX - clampedPoint.x);
+			float distToRight = Mathf.Abs(maxX - clampedPoint.x);
+			float distToBottom = Mathf.Abs(minY - clampedPoint.y);
+			float distToTop = Mathf.Abs(maxY - clampedPoint.y);
+			
+			// Find the minimum distance
+			float minDist = Mathf.Min(distToLeft, distToRight, distToBottom, distToTop);
+			
+			// Return the closest edge point
+			if (minDist == distToLeft) {
+				return new Vector2(minX, clampedPoint.y);
+			} else if (minDist == distToRight) {
+				return new Vector2(maxX, clampedPoint.y);
+			} else if (minDist == distToBottom) {
+				return new Vector2(clampedPoint.x, minY);
+			} else { // minDist == distToTop
+				return new Vector2(clampedPoint.x, maxY);
+			}
+		}
+		
+		private static IEnumerable<Vector3> GetBoundsCorners(Bounds bounds) {
+			Vector3 min = bounds.min;
+			Vector3 max = bounds.max;
+			// min-all, go from min to max z
+			yield return new Vector3(min.x, min.y, min.z);
+			yield return new Vector3(min.x, min.y, max.z);
+			yield return new Vector3(min.x, max.y, min.z);
+			yield return new Vector3(min.x, max.y, max.z);
+			yield return new Vector3(max.x, min.y, min.z);
+			yield return new Vector3(max.x, min.y, max.z);
+			yield return new Vector3(max.x, max.y, min.z);
+			yield return new Vector3(max.x, max.y, max.z);
+		}
+		
+		private static Bounds GetBoundsViewportBounds(Bounds bounds, Camera camera, System.Func<Vector3,Vector3> treeToWorld) {
+			var viewportPoint = camera.WorldToViewportPoint(bounds.center);
+			float minX = viewportPoint.x;
+			float minY = viewportPoint.y;
+			float maxX = viewportPoint.x;
+			float maxY = viewportPoint.y;
+			float minZ = viewportPoint.z;
+			float maxZ = viewportPoint.z;
+			foreach (var point in GetBoundsCorners(bounds)) {
+				viewportPoint = camera.WorldToViewportPoint(treeToWorld?.Invoke(point) ?? point);
+				if (viewportPoint.x < minX) {
+					minX = viewportPoint.x;
+				} else if (viewportPoint.x > maxX) {
+					maxX = viewportPoint.x;
+				}
+				if (viewportPoint.y < minY) {
+					minY = viewportPoint.y;
+				} else if (viewportPoint.y > maxY) {
+					maxY = viewportPoint.y;
+				}
+				if (viewportPoint.z < minZ) {
+					minZ = viewportPoint.z;
+				} else if (viewportPoint.z > maxZ) {
+					maxZ = viewportPoint.z;
+				}
+			}
+			var viewportBounds = new Bounds();
+			viewportBounds.SetMinMax(min: new Vector3(minX, minY, minZ), max: new Vector3(maxX, maxY, maxZ));
+			return viewportBounds;
 		}
 		
 		/// <summary>
