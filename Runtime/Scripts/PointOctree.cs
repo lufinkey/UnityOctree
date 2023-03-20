@@ -248,7 +248,7 @@ namespace Octrees
 		/// <param name="closestSqrDistance2D">The square distance of the closest object to the origin (in 2D view space)</param>
 		/// <returns>true if an object could be found, false otherwise</returns>
 		public bool FindClosestInDirection2D(Vector3 origin, Vector2 direction2D, float minDotProduct2D, Quaternion worldToView, Plane? nearClippingPlane, System.Predicate<T> filter, out T closestObj, out float closestSqrDistance2D) {
-			return rootNode.FindClosestInDirection2D(origin, direction2D, minDotProduct2D, worldToView, nearClippingPlane, filter, out closestObj, out closestSqrDistance2D);
+			return rootNode.FindClosestInDirection2D(origin, direction2D.normalized, minDotProduct2D, worldToView, nearClippingPlane, filter, out closestObj, out closestSqrDistance2D);
 		}
 		
 		/// <summary>

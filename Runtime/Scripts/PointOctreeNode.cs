@@ -281,7 +281,7 @@ namespace Octrees
 				// get object offset
 				Vector3 objOffset = worldToView * (obj.Pos - origin);
 				var objOffset2D = new Vector2(objOffset.x, objOffset.y);
-				float objOffsetDot = Vector2.Dot(direction2D, objOffset2D);
+				float objOffsetDot = Vector2.Dot(direction2D, objOffset2D.normalized);
 				if (objOffsetDot < minDotProduct2D) {
 					continue;
 				}
@@ -309,8 +309,9 @@ namespace Octrees
 		
 		private static bool IsBoundsInView(Vector3 origin, Vector2 direction2D, Bounds bounds, float minDotProduct2D, Quaternion worldToView, Plane? nearClippingPlane) {
 			foreach (var cornerPoint in GetBoundsCorners(bounds)) {
-				var cornerDirection2D = (worldToView * (cornerPoint - origin));
-				float dotProduct = Vector2.Dot(direction2D, new Vector2(cornerDirection2D.x, cornerDirection2D.y));
+				var cornerDirection = (worldToView * (cornerPoint - origin));
+				var cornerDirection2D = new Vector2(cornerDirection.x, cornerDirection.y);
+				float dotProduct = Vector2.Dot(direction2D, cornerDirection2D.normalized);
 				if (dotProduct >= minDotProduct2D && (nearClippingPlane == null || nearClippingPlane.Value.GetDistanceToPoint(cornerPoint) > 0)) {
 					return true;
 				}
