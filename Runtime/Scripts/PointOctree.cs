@@ -187,7 +187,7 @@ namespace Octrees
 		}
 		
 		// A stupid temp implementation of this thing.
-		public T GetClosest(in Vector3 position, float startingDistance, List<ItemInfoWithDistance<T>> cache = null)
+		public T GetClosest(in Vector3 position, float startingDistance = float.MaxValue, List<ItemInfoWithDistance<T>> cache = null)
 		{
 			Assert.IsTrue(Count > 0);
 			if (cache == null) {
@@ -216,7 +216,7 @@ namespace Octrees
 
 			return cache[minIndex].obj;
 		}
-
+		
 		/// <summary>
 		/// Returns objects that are within <paramref name="maxDistance"/> of the specified position.
 		/// If none, returns false. Uses supplied list for results.
@@ -234,7 +234,23 @@ namespace Octrees
 				return true;
 			return false;
 		}
-
+		
+		/// <summary>
+		/// Finds the object in the octree that lies in the given direction and has the closest 2D distance (in terms of the given viewing angle) to the given origin.
+		/// </summary>
+		/// <param name="origin">The origin point that the 2D distance will be compared against</param>
+		/// <param name="direction2D">The 2D direction that the found object should lie in</param>
+		/// <param name="minDotProduct2D">The minimum dot product allowed from an object's offset from the given ray origin (in 2D)</param>
+		/// <param name="worldToView"> Converts a world offset to a view offset</param>
+		/// <param name="nearClippingPlane">Ensure any found points are in front of this plane</param>
+		/// <param name="filter">Filter function to allow or ignore certain objects in the Octree</param>
+		/// <param name="closestObj">The closest object found in the Octree, or `default` if not found</param>
+		/// <param name="closestSqrDistance2D">The square distance of the closest object to the origin (in 2D view space)</param>
+		/// <returns>true if an object could be found, false otherwise</returns>
+		public bool FindClosestInDirection2D(Vector3 origin, Vector2 direction2D, float minDotProduct2D, Quaternion worldToView, Plane? nearClippingPlane, System.Predicate<T> filter, out T closestObj, out float closestSqrDistance2D) {
+			return rootNode.FindClosestInDirection2D(origin, direction2D, minDotProduct2D, worldToView, nearClippingPlane, filter, out closestObj, out closestSqrDistance2D);
+		}
+		
 		/// <summary>
 		/// Return all objects in the tree.
 		/// If none, returns an empty array (not null).
