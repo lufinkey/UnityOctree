@@ -308,7 +308,7 @@ namespace Octrees
 		}
 		
 		private static bool IsBoundsInView(Vector3 origin, Vector2 direction2D, Bounds bounds, float minDotProduct2D, Quaternion worldToView, Plane? nearClippingPlane) {
-			foreach (var cornerPoint in GetBoundsCorners(bounds)) {
+			foreach (var cornerPoint in GetBoundsPoints(bounds)) {
 				var cornerDirection = (worldToView * (cornerPoint - origin));
 				var cornerDirection2D = new Vector2(cornerDirection.x, cornerDirection.y);
 				float dotProduct = Vector2.Dot(direction2D, cornerDirection2D.normalized);
@@ -319,7 +319,7 @@ namespace Octrees
 			return false;
 		}
 		
-		private static IEnumerable<Vector3> GetBoundsCorners(Bounds bounds) {
+		private static IEnumerable<Vector3> GetBoundsPoints(Bounds bounds) {
 			Vector3 min = bounds.min;
 			Vector3 max = bounds.max;
 			yield return new Vector3(min.x, min.y, min.z);
@@ -330,6 +330,7 @@ namespace Octrees
 			yield return new Vector3(max.x, min.y, max.z);
 			yield return new Vector3(max.x, max.y, min.z);
 			yield return new Vector3(max.x, max.y, max.z);
+			yield return bounds.center;
 		}
 		
 	
