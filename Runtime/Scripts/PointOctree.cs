@@ -282,7 +282,7 @@ namespace Octrees
 				distance = pointDirection2D.sqrMagnitude;
 				return true;
 			};
-			PointOctreeNode<T>.IsBoundsVisible isBoundsVisible = (Bounds bounds) => {
+			PointOctreeNode<T>.IsBoundsVisible isBoundsVisible = (bounds) => {
 				var boundsInViewport = GetBoundsViewportBounds(bounds, camera, treeToWorld);
 				var viewportBoundsMin = boundsInViewport.min;
 				var viewportBoundsMax = boundsInViewport.max;
