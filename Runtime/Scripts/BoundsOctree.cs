@@ -32,42 +32,47 @@ namespace Octrees
 		// Should be a value between 1 and 2. A multiplier for the base size of a node.
 		// 1.0 is a "normal" octree, while values > 1 have overlap
 		public readonly float looseness;
-
+		
 		// Size that the octree was on creation
 		public readonly float initialSize;
-
+		
 		// Minimum side length that a node can be - essentially an alternative to having a max depth
-		public readonly float minSize;
-
+		public readonly float minNodeSize;
+		
 		// For collision visualisation. Automatically removed in builds.
 		#if UNITY_EDITOR
 		const int numCollisionsToSave = 4;
 		readonly Queue<Bounds> lastBoundsCollisionChecks = new Queue<Bounds>();
 		readonly Queue<Ray> lastRayCollisionChecks = new Queue<Ray>();
 		#endif
-
+		
 		/// <summary>
 		/// Constructor for the bounds octree.
 		/// </summary>
-		/// <param name="initialWorldSize">Size of the sides of the initial node, in metres. The octree will never shrink smaller than this.</param>
-		/// <param name="initialWorldPos">Position of the centre of the initial node.</param>
+		/// <param name="initialSize">Size of the sides of the initial node, in metres. The octree will never shrink smaller than this.</param>
+		/// <param name="initialCenter">Position of the centre of the initial node.</param>
 		/// <param name="minNodeSize">Nodes will stop splitting if the new nodes would be smaller than this (metres).</param>
-		/// <param name="loosenessVal">Clamped between 1 and 2. Values > 1 let nodes overlap.</param>
-		public BoundsOctree(float initialWorldSize, Vector3 initialWorldPos, float minNodeSize, float loosenessVal) {
-			if (minNodeSize > initialWorldSize) {
-				Debug.LogWarning($"Minimum node size must be at least as big as the initial world size. Was: {minNodeSize} Adjusted to: {initialWorldSize}");
-				minNodeSize = initialWorldSize;
+		/// <param name="looseness">Clamped between 1 and 2. Values > 1 let nodes overlap.</param>
+		public BoundsOctree(float initialSize, Vector3 initialCenter, float minNodeSize, float looseness) {
+			if (minNodeSize > initialSize) {
+				Debug.LogWarning($"Minimum node size must be at least as big as the initial size. Was: {minNodeSize} Adjusted to: {initialSize}");
+				minNodeSize = initialSize;
 			}
-			initialSize = initialWorldSize;
-			minSize = minNodeSize;
-			looseness = Mathf.Clamp(loosenessVal, 1.0f, 2.0f);
-			rootNode = new BoundsOctreeNode<T>(this, initialSize, initialWorldPos);
+			this.initialSize = initialSize;
+			this.minNodeSize = minNodeSize;
+			this.looseness = Mathf.Clamp(looseness, 1.0f, 2.0f);
+			this.rootNode = new BoundsOctreeNode<T>(this, initialSize, initialCenter);
 		}
 		
 		/// <summary>
-		/// The bounds of the root node of the octree
+		/// The strict bounds of the root node of the octree
 		/// </summary>
 		public Bounds bounds => rootNode.bounds;
+		
+		/// <summary>
+		/// The loose bounds of the root node of the octree
+		/// </summary>
+		public Bounds looseBounds => rootNode.looseBounds;
 		
 		/// <summary>
 		/// The number of objects in this octree
@@ -90,6 +95,9 @@ namespace Octrees
 		/// <returns>true if the object could be added, false if it could not</returns>
 		public bool Add(T obj, Bounds objBounds, int maxGrowAttempts = DefaultMaxGrowAttempts) {
 			// Add object or expand the octree until it can be added
+			if (maxGrowAttempts == 0) {
+				return rootNode.Add(obj, objBounds);
+			}
 			int count = 0; // Safety check against infinite/excessive growth
 			while (!rootNode.Add(obj, objBounds)) {
 				Grow(objBounds.center - rootNode.center);
@@ -126,7 +134,7 @@ namespace Octrees
 		/// <param name="mergeIfAble">Whether octree nodes should get merged if they're able to be</param>
 		/// <returns>The result of moving the object within the octree</returns>
 		public OctreeMoveResult Move(T obj, Bounds newObjBounds, int maxGrowAttempts = DefaultMaxGrowAttempts, bool mergeIfAble = true) {
-			var moveResult = rootNode.Move(obj, newObjBounds, mergeIfAble:mergeIfAble);
+			var moveResult = rootNode.Move(obj, newObjBounds, isRoot:true, mergeIfAble:mergeIfAble);
 			switch (moveResult) {
 				case OctreeMoveResult.None:
 					return OctreeMoveResult.None;
@@ -142,6 +150,30 @@ namespace Octrees
 			}
 			Debug.LogError($"Unknown octree move result {moveResult}");
 			return OctreeMoveResult.None;
+		}
+		
+		/// <summary>
+		/// Adds or moves the given object within the octree
+		/// </summary>
+		/// <param name="obj">The object to move or add</param>
+		/// <param name="objBounds">The bounds of the object</param>
+		/// <param name="maxGrowAttempts">The maximum number of times the octree should try to grow to encapsulate the given object</param>
+		/// <param name="mergeIfAble">Whether octree nodes should get merged if they're able to be</param>
+		/// <returns>true if the object resides in the octree after this operation, false if it does not</returns>
+		public bool AddOrMove(T obj, Bounds objBounds, int maxGrowAttempts = DefaultMaxGrowAttempts, bool mergeIfAble = true) {
+			var moveResult = Move(obj, objBounds, maxGrowAttempts:maxGrowAttempts, mergeIfAble:mergeIfAble);
+			switch (moveResult) {
+				case OctreeMoveResult.None:
+					return Add(obj, objBounds, maxGrowAttempts: maxGrowAttempts);
+				
+				case OctreeMoveResult.Removed:
+					return false;
+				
+				case OctreeMoveResult.Moved:
+					return true;
+			}
+			Debug.LogError($"Unknown octree move result {moveResult}");
+			return false;
 		}
 		
 		/// <summary>
