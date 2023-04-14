@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace Octrees
@@ -7,34 +8,33 @@ namespace Octrees
 	// Copyright 2014 Nition, BSD licence (see LICENCE file). www.momentstudio.co.nz
 	public class BoundsOctreeNode<T>
 	{
+		public readonly BoundsOctree<T> tree;
+		
 		// Centre of this node
-		public Vector3 Center { get; private set; }
-
+		public Vector3 center { get; private set; }
+		
 		// Length of this node if it has a looseness of 1.0
-		public float BaseLength { get; private set; }
-
-		// Looseness value for this node
-		float looseness;
-
-		// Minimum size for a node in this octree
-		float minSize;
-
+		public float baseLength { get; private set; }
+		
 		// Actual length of sides, taking the looseness value into account
-		float adjLength;
-
+		public float adjustedLength { get; private set; }
+		
 		// Bounding box that represents this node
-		Bounds bounds = default(Bounds);
-
+		public Bounds bounds { get; private set; }
+		
 		// Objects in this node
-		readonly List<OctreeObject> objects = new List<OctreeObject>();
-
+		public IReadOnlyCollection<T> objects => _objects.Keys;
+		private Dictionary<T,Bounds> _objects = new Dictionary<T,Bounds>();
+		
+		// Objects in the children of this node
+		public IReadOnlyCollection<T> objectsInChildren => _objectsInChildren;
+		private HashSet<T> _objectsInChildren = new HashSet<T>();
+		
 		// Child nodes, if any
-		BoundsOctreeNode<T>[] children = null;
-
-		bool HasChildren
-		{
-			get { return children != null; }
-		}
+		public IReadOnlyList<BoundsOctreeNode<T>> children => _children;
+		private BoundsOctreeNode<T>[] _children = null;
+		
+		public bool hasChildren => _children != null;
 
 		// Bounds of potential children to this node. These are actual size (with looseness taken into account), not base size
 		Bounds[] childBounds;
@@ -54,15 +54,25 @@ namespace Octrees
 		/// Constructor.
 		/// </summary>
 		/// <param name="baseLengthVal">Length of this node, not taking looseness into account.</param>
-		/// <param name="minSizeVal">Minimum size of nodes in this octree.</param>
-		/// <param name="loosenessVal">Multiplier for baseLengthVal to get the actual size.</param>
 		/// <param name="centerVal">Centre position of this node.</param>
-		public BoundsOctreeNode(float baseLengthVal, float minSizeVal, float loosenessVal, Vector3 centerVal)
-		{
-			SetValues(baseLengthVal, minSizeVal, loosenessVal, centerVal);
+		public BoundsOctreeNode(BoundsOctree<T> tree, float baseLengthVal, Vector3 centerVal) {
+			this.tree = tree;
+			SetValues(baseLengthVal, centerVal);
 		}
-
-		// #### PUBLIC METHODS ####
+		
+		/// <summary>
+		/// The number of objects contained in this node and its children
+		/// </summary>
+		public int Count => (_objects.Count + _objectsInChildren.Count);
+		
+		/// <summary>
+		/// Tells if this node contains the given object
+		/// </summary>
+		/// <param name="obj">The object to check</param>
+		/// <returns>true if the node or its children contains the object, false otherwise</returns>
+		public bool Contains(T obj) {
+			return _objects.ContainsKey(obj) || _objectsInChildren.Contains(obj);
+		}
 
 		/// <summary>
 		/// Add an object.
@@ -70,14 +80,30 @@ namespace Octrees
 		/// <param name="obj">Object to add.</param>
 		/// <param name="objBounds">3D bounding box around the object.</param>
 		/// <returns>True if the object fits entirely within this node.</returns>
-		public bool Add(T obj, Bounds objBounds)
-		{
-			if (!Encapsulates(bounds, objBounds))
-			{
+		public bool Add(T obj, Bounds objBounds) {
+			if (!Encapsulates(bounds, objBounds)) {
 				return false;
 			}
-
-			SubAdd(obj, objBounds);
+			// We always put things in the deepest possible child
+			// So we can skip some checks if there are children aleady
+			if (_children == null) {
+				// Just add if few objects are here, or children would be below min size
+				if (_objects.Count < NUM_OBJECTS_ALLOWED || (baseLength / 2) <= tree.minSize) {
+					_objects[obj] = bounds;
+					return true;
+				}
+				// Fits at this level, but we can go deeper. Would it fit there?
+				Split();
+			}
+			// Find which child node the object should reside in
+			int bestFitChildIndex = BestFitChild(objBounds.center);
+			var bestFitChildNode = _children[bestFitChildIndex];
+			if (bestFitChildNode.Add(obj, objBounds)) {
+				_objectsInChildren.Add(obj);
+			} else {
+				// Didn't fit in a child. We'll have to it to this node instead
+				_objects[obj] = objBounds;
+			}
 			return true;
 		}
 
@@ -85,91 +111,139 @@ namespace Octrees
 		/// Remove an object. Makes the assumption that the object only exists once in the tree.
 		/// </summary>
 		/// <param name="obj">Object to remove.</param>
+		/// <param name="mergeIfAble">Whether child nodes should get merged if they're able to be</param>
 		/// <returns>True if the object was removed successfully.</returns>
-		public bool Remove(T obj)
-		{
+		public bool Remove(T obj, bool mergeIfAble = true) {
 			bool removed = false;
-
-			for (int i = 0; i < objects.Count; i++)
-			{
-				if (objects[i].Obj.Equals(obj))
-				{
-					removed = objects.Remove(objects[i]);
-					break;
+			// try to remove object from self
+			if (_objects.Remove(obj)) {
+				removed = true;
+			}
+			// try to remove object from children
+			else if (_children != null && _objectsInChildren.Contains(obj)) {
+				foreach (var childNode in _children) {
+					// remove from child node
+					if (childNode.Remove(obj)) {
+						removed = true;
+						_objectsInChildren.Remove(obj);
+						break;
+					}
 				}
 			}
-
-			if (!removed && children != null)
-			{
-				for (int i = 0; i < 8; i++)
-				{
-					removed = children[i].Remove(obj);
-					if (removed) break;
-				}
-			}
-
-			if (removed && children != null)
-			{
+			if (removed && _children != null) {
 				// Check if we should merge nodes now that we've removed an item
-				if (ShouldMerge())
-				{
+				if (mergeIfAble && ShouldMerge()) {
 					Merge();
 				}
 			}
-
 			return removed;
 		}
 
 		/// <summary>
-		/// Removes the specified object at the given position. Makes the assumption that the object only exists once in the tree.
+		/// Attempt to move an object somewhere else in this node. If the object is contained but cannot be re-added, it will just be removed
 		/// </summary>
-		/// <param name="obj">Object to remove.</param>
-		/// <param name="objBounds">3D bounding box around the object.</param>
-		/// <returns>True if the object was removed successfully.</returns>
-		public bool Remove(T obj, Bounds objBounds)
-		{
-			if (!Encapsulates(bounds, objBounds))
-			{
-				return false;
+		/// <param name="obj">The object to move</param>
+		/// <param name="newObjBounds">The new object bounds</param>
+		/// <param name="mergeIfAble">Merge any mergeable nodes in the octree</param>
+		/// <returns>The result of attempting to move the object</returns>
+		public OctreeMoveResult Move(T obj, Bounds newObjBounds, bool mergeIfAble = true) {
+			// try to move from this node
+			if (_objects.Remove(obj)) {
+				if (Add(obj, newObjBounds)) {
+					return OctreeMoveResult.Moved;
+				}
+				return OctreeMoveResult.Removed;
 			}
-
-			return SubRemove(obj, objBounds);
+			// try to move from children
+			if (_children != null && _objectsInChildren.Contains(obj)) {
+				foreach (var childNode in _children) {
+					var moveResult = childNode.Move(obj, newObjBounds);
+					switch (moveResult) {
+						case OctreeMoveResult.None:
+							break;
+						
+						case OctreeMoveResult.Removed:
+							// try adding to other children if encapsulated
+							if (Encapsulates(newObjBounds)) {
+								foreach (var otherChildNode in _children) {
+									if (otherChildNode == childNode) {
+										continue;
+									}
+									if (otherChildNode.Add(obj, newObjBounds)) {
+										return OctreeMoveResult.Moved;
+									}
+								}
+								_objects[obj] = newObjBounds;
+								_objectsInChildren.Remove(obj);
+								if (mergeIfAble && ShouldMerge()) {
+									Merge();
+								}
+								return OctreeMoveResult.Moved;
+							} else {
+								_objectsInChildren.Remove(obj);
+								if (mergeIfAble && ShouldMerge()) {
+									Merge();
+								}
+								return OctreeMoveResult.Removed;
+							}
+						
+						case OctreeMoveResult.Moved:
+							// object was moved
+							return OctreeMoveResult.Moved;
+					}
+				}
+			}
+			// object is not in this node
+			return OctreeMoveResult.None;
 		}
-
+		
+		/// <summary>
+		/// Find the node that fully encapsulates the given bounds
+		/// </summary>
+		/// <param name="innerBounds">The inner bounds to check</param>
+		/// <returns>The node which fully encapsulates the given bounds, or null if no node fully encapsulates the given bounds</returns>
+		public BoundsOctreeNode<T> FindEncapsulatingNode(in Bounds innerBounds) {
+			if (!Encapsulates(innerBounds)) {
+				return null;
+			}
+			if (_children != null) {
+				foreach (var childNode in _children) {
+					var encapsulatingNode = childNode.FindEncapsulatingNode(innerBounds);
+					if (encapsulatingNode != null) {
+						return encapsulatingNode;
+					}
+				}
+			}
+			return this;
+		}
+		
 		/// <summary>
 		/// Check if the specified bounds intersect with anything in the tree. See also: GetColliding.
 		/// </summary>
 		/// <param name="checkBounds">Bounds to check.</param>
 		/// <returns>True if there was a collision.</returns>
-		public bool IsColliding(ref Bounds checkBounds)
-		{
+		public bool IsColliding(in Bounds checkBounds) {
 			// Are the input bounds at least partially in this node?
-			if (!bounds.Intersects(checkBounds))
-			{
+			if (!bounds.Intersects(checkBounds)) {
 				return false;
 			}
-
 			// Check against any objects in this node
-			for (int i = 0; i < objects.Count; i++)
-			{
-				if (objects[i].Bounds.Intersects(checkBounds))
-				{
+			foreach (var pair in _objects) {
+				if (pair.Value.Intersects(checkBounds)) {
 					return true;
 				}
 			}
-
 			// Check children
-			if (children != null)
+			if (_children != null)
 			{
 				for (int i = 0; i < 8; i++)
 				{
-					if (children[i].IsColliding(ref checkBounds))
+					if (_children[i].IsColliding(checkBounds))
 					{
 						return true;
 					}
 				}
 			}
-
 			return false;
 		}
 
@@ -179,36 +253,26 @@ namespace Octrees
 		/// <param name="checkRay">Ray to check.</param>
 		/// <param name="maxDistance">Distance to check.</param>
 		/// <returns>True if there was a collision.</returns>
-		public bool IsColliding(ref Ray checkRay, float maxDistance = float.PositiveInfinity)
-		{
+		public bool IsRayColliding(in Ray checkRay, float maxDistance = float.PositiveInfinity) {
 			// Is the input ray at least partially in this node?
 			float distance;
-			if (!bounds.IntersectRay(checkRay, out distance) || distance > maxDistance)
-			{
+			if (!bounds.IntersectRay(checkRay, out distance) || distance > maxDistance) {
 				return false;
 			}
-
 			// Check against any objects in this node
-			for (int i = 0; i < objects.Count; i++)
-			{
-				if (objects[i].Bounds.IntersectRay(checkRay, out distance) && distance <= maxDistance)
-				{
+			foreach (var pair in _objects) {
+				if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
 					return true;
 				}
 			}
-
 			// Check children
-			if (children != null)
-			{
-				for (int i = 0; i < 8; i++)
-				{
-					if (children[i].IsColliding(ref checkRay, maxDistance))
-					{
+			if (_children != null) {
+				foreach (var childNode in _children) {
+					if (childNode.IsRayColliding(checkRay, maxDistance)) {
 						return true;
 					}
 				}
 			}
-
 			return false;
 		}
 
@@ -218,29 +282,21 @@ namespace Octrees
 		/// <param name="checkBounds">Bounds to check. Passing by ref as it improves performance with structs.</param>
 		/// <param name="result">List result.</param>
 		/// <returns>Objects that intersect with the specified bounds.</returns>
-		public void GetColliding(ref Bounds checkBounds, List<T> result)
-		{
+		public void GetColliding(in Bounds checkBounds, List<T> result) {
 			// Are the input bounds at least partially in this node?
-			if (!bounds.Intersects(checkBounds))
-			{
+			if (!bounds.Intersects(checkBounds)) {
 				return;
 			}
-
 			// Check against any objects in this node
-			for (int i = 0; i < objects.Count; i++)
-			{
-				if (objects[i].Bounds.Intersects(checkBounds))
-				{
-					result.Add(objects[i].Obj);
+			foreach (var pair in _objects) {
+				if (pair.Value.Intersects(checkBounds)) {
+					result.Add(pair.Key);
 				}
 			}
-
 			// Check children
-			if (children != null)
-			{
-				for (int i = 0; i < 8; i++)
-				{
-					children[i].GetColliding(ref checkBounds, result);
+			if (_children != null) {
+				foreach (var childNode in _children) {
+					childNode.GetColliding(checkBounds, result);
 				}
 			}
 		}
@@ -252,79 +308,55 @@ namespace Octrees
 		/// <param name="maxDistance">Distance to check.</param>
 		/// <param name="result">List result.</param>
 		/// <returns>Objects that intersect with the specified ray.</returns>
-		public void GetColliding(ref Ray checkRay, List<T> result, float maxDistance = float.PositiveInfinity)
-		{
+		public void GetRayColliding(in Ray checkRay, List<T> result, float maxDistance) {
 			float distance;
 			// Is the input ray at least partially in this node?
-			if (!bounds.IntersectRay(checkRay, out distance) || distance > maxDistance)
-			{
+			if (!bounds.IntersectRay(checkRay, out distance) || distance > maxDistance) {
 				return;
 			}
-
 			// Check against any objects in this node
-			for (int i = 0; i < objects.Count; i++)
-			{
-				if (objects[i].Bounds.IntersectRay(checkRay, out distance) && distance <= maxDistance)
-				{
-					result.Add(objects[i].Obj);
+			foreach (var pair in _objects) {
+				if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
+					result.Add(pair.Key);
 				}
 			}
-
 			// Check children
-			if (children != null)
-			{
-				for (int i = 0; i < 8; i++)
-				{
-					children[i].GetColliding(ref checkRay, result, maxDistance);
+			if (_children != null) {
+				foreach (var childNode in _children) {
+					childNode.GetRayColliding(checkRay, result, maxDistance);
 				}
 			}
 		}
-
-		public void GetWithinFrustum(Plane[] planes, List<T> result)
-		{
+		
+		public void GetWithinFrustum(Plane[] planes, List<T> result) {
 			// Is the input node inside the frustum?
-			if (!GeometryUtility.TestPlanesAABB(planes, bounds))
-			{
+			if (!GeometryUtility.TestPlanesAABB(planes, bounds)) {
 				return;
 			}
-
 			// Check against any objects in this node
-			for (int i = 0; i < objects.Count; i++)
-			{
-				if (GeometryUtility.TestPlanesAABB(planes, objects[i].Bounds))
-				{
-					result.Add(objects[i].Obj);
+			foreach (var pair in _objects) {
+				if (GeometryUtility.TestPlanesAABB(planes, pair.Value)) {
+					result.Add(pair.Key);
 				}
 			}
-
 			// Check children
-			if (children != null)
-			{
-				for (int i = 0; i < 8; i++)
-				{
-					children[i].GetWithinFrustum(planes, result);
+			if (_children != null) {
+				foreach (var childNode in _children) {
+					childNode.GetWithinFrustum(planes, result);
 				}
 			}
 		}
-
+		
 		/// <summary>
 		/// Set the 8 children of this octree.
 		/// </summary>
 		/// <param name="childOctrees">The 8 new child nodes.</param>
-		public void SetChildren(BoundsOctreeNode<T>[] childOctrees)
-		{
-			if (childOctrees.Length != 8)
-			{
+		public void SetChildren(BoundsOctreeNode<T>[] childOctrees) {
+			if (childOctrees.Length != 8) {
 				Debug.LogError("Child octree array must be length 8. Was length: " + childOctrees.Length);
 				return;
 			}
-
-			children = childOctrees;
-		}
-
-		public Bounds GetBounds()
-		{
-			return bounds;
+			_children = childOctrees;
 		}
 
 		/// <summary>
@@ -337,15 +369,15 @@ namespace Octrees
 			float tintVal = depth / 7; // Will eventually get values > 1. Color rounds to 1 automatically
 			Gizmos.color = new Color(tintVal, 0, 1.0f - tintVal);
 
-			Bounds thisBounds = new Bounds(Center, new Vector3(adjLength, adjLength, adjLength));
+			Bounds thisBounds = new Bounds(center, new Vector3(adjustedLength, adjustedLength, adjustedLength));
 			Gizmos.DrawWireCube(thisBounds.center, thisBounds.size);
 
-			if (children != null)
+			if (_children != null)
 			{
 				depth++;
 				for (int i = 0; i < 8; i++)
 				{
-					children[i].DrawAllBounds(depth);
+					_children[i].DrawAllBounds(depth);
 				}
 			}
 
@@ -358,22 +390,19 @@ namespace Octrees
 		/// </summary>
 		public void DrawAllObjects()
 		{
-			float tintVal = BaseLength / 20;
+			float tintVal = baseLength / 20;
 			Gizmos.color = new Color(0, 1.0f - tintVal, tintVal, 0.25f);
 
-			foreach (OctreeObject obj in objects)
-			{
-				Gizmos.DrawCube(obj.Bounds.center, obj.Bounds.size);
+			foreach (var pair in _objects) {
+				var objBounds = pair.Value;
+				Gizmos.DrawCube(objBounds.center, objBounds.size);
 			}
-
-			if (children != null)
-			{
-				for (int i = 0; i < 8; i++)
-				{
-					children[i].DrawAllObjects();
+			
+			if (_children != null) {
+				for (int i = 0; i < 8; i++) {
+					_children[i].DrawAllObjects();
 				}
 			}
-
 			Gizmos.color = Color.white;
 		}
 
@@ -388,51 +417,43 @@ namespace Octrees
 		/// <returns>The new root, or the existing one if we didn't shrink.</returns>
 		public BoundsOctreeNode<T> ShrinkIfPossible(float minLength)
 		{
-			if (BaseLength < (2 * minLength))
-			{
+			if (baseLength < (2 * minLength)) {
 				return this;
 			}
-
-			if (objects.Count == 0 && (children == null || children.Length == 0))
-			{
+			if (objects.Count == 0 && (_children == null || _children.Length == 0)) {
 				return this;
 			}
-
+			
 			// Check objects in root
 			int bestFit = -1;
-			for (int i = 0; i < objects.Count; i++)
-			{
-				OctreeObject curObj = objects[i];
-				int newBestFit = BestFitChild(curObj.Bounds.center);
-				if (i == 0 || newBestFit == bestFit)
-				{
+			bool firstObj = true;
+			foreach (var pair in _objects) {
+				var obj = pair.Key;
+				var objBounds = pair.Value;
+				int newBestFit = BestFitChild(objBounds.center);
+				if (firstObj || newBestFit == bestFit) {
+					firstObj = false;
 					// In same octant as the other(s). Does it fit completely inside that octant?
-					if (Encapsulates(childBounds[newBestFit], curObj.Bounds))
-					{
-						if (bestFit < 0)
-						{
+					if (Encapsulates(childBounds[newBestFit], objBounds)) {
+						if (bestFit < 0) {
 							bestFit = newBestFit;
 						}
-					}
-					else
-					{
+					} else {
 						// Nope, so we can't reduce. Otherwise we continue
 						return this;
 					}
-				}
-				else
-				{
+				} else {
 					return this; // Can't reduce - objects fit in different octants
 				}
 			}
 
 			// Check objects in children if there are any
-			if (children != null)
+			if (_children != null)
 			{
 				bool childHadContent = false;
-				for (int i = 0; i < children.Length; i++)
+				for (int i = 0; i < _children.Length; i++)
 				{
-					if (children[i].HasAnyObjects())
+					if (_children[i].HasAnyObjects())
 					{
 						if (childHadContent)
 						{
@@ -451,11 +472,11 @@ namespace Octrees
 			}
 
 			// Can reduce
-			if (children == null)
+			if (_children == null)
 			{
 				// We don't have any children, so just shrink this node to the new size
 				// We already know that everything will still fit in it
-				SetValues(BaseLength / 2, minSize, looseness, childBounds[bestFit].center);
+				SetValues(baseLength / 2, childBounds[bestFit].center);
 				return this;
 			}
 
@@ -466,7 +487,7 @@ namespace Octrees
 			}
 
 			// We have children. Use the appropriate child as the new root node
-			return children[bestFit];
+			return _children[bestFit];
 		}
 
 		/// <summary>
@@ -476,8 +497,9 @@ namespace Octrees
 		/// <returns>One of the eight child octants.</returns>
 		public int BestFitChild(Vector3 objBoundsCenter)
 		{
-			return (objBoundsCenter.x <= Center.x ? 0 : 1) + (objBoundsCenter.y >= Center.y ? 0 : 4) +
-			       (objBoundsCenter.z <= Center.z ? 0 : 2);
+			return (objBoundsCenter.x <= center.x ? 0 : 1)
+			       + (objBoundsCenter.y >= center.y ? 0 : 4)
+			       + (objBoundsCenter.z <= center.z ? 0 : 2);
 		}
 
 		/// <summary>
@@ -488,11 +510,11 @@ namespace Octrees
 		{
 			if (objects.Count > 0) return true;
 
-			if (children != null)
+			if (_children != null)
 			{
 				for (int i = 0; i < 8; i++)
 				{
-					if (children[i].HasAnyObjects()) return true;
+					if (_children[i].HasAnyObjects()) return true;
 				}
 			}
 
@@ -516,167 +538,68 @@ namespace Octrees
 		}
 		*/
 
-		// #### PRIVATE METHODS ####
-
 		/// <summary>
 		/// Set values for this node. 
 		/// </summary>
 		/// <param name="baseLengthVal">Length of this node, not taking looseness into account.</param>
-		/// <param name="minSizeVal">Minimum size of nodes in this octree.</param>
 		/// <param name="loosenessVal">Multiplier for baseLengthVal to get the actual size.</param>
 		/// <param name="centerVal">Centre position of this node.</param>
-		void SetValues(float baseLengthVal, float minSizeVal, float loosenessVal, Vector3 centerVal)
-		{
-			BaseLength = baseLengthVal;
-			minSize = minSizeVal;
-			looseness = loosenessVal;
-			Center = centerVal;
-			adjLength = looseness * baseLengthVal;
+		private void SetValues(float baseLengthVal, Vector3 centerVal) {
+			baseLength = baseLengthVal;
+			center = centerVal;
+			adjustedLength = tree.looseness * baseLengthVal;
 
 			// Create the bounding box.
-			Vector3 size = new Vector3(adjLength, adjLength, adjLength);
-			bounds = new Bounds(Center, size);
-
-			float quarter = BaseLength / 4f;
-			float childActualLength = (BaseLength / 2) * looseness;
+			Vector3 size = new Vector3(adjustedLength, adjustedLength, adjustedLength);
+			bounds = new Bounds(center, size);
+			
+			float quarter = baseLength / 4f;
+			float childActualLength = (baseLength / 2) * tree.looseness;
 			Vector3 childActualSize = new Vector3(childActualLength, childActualLength, childActualLength);
 			childBounds = new Bounds[8];
-			childBounds[0] = new Bounds(Center + new Vector3(-quarter, quarter, -quarter), childActualSize);
-			childBounds[1] = new Bounds(Center + new Vector3(quarter, quarter, -quarter), childActualSize);
-			childBounds[2] = new Bounds(Center + new Vector3(-quarter, quarter, quarter), childActualSize);
-			childBounds[3] = new Bounds(Center + new Vector3(quarter, quarter, quarter), childActualSize);
-			childBounds[4] = new Bounds(Center + new Vector3(-quarter, -quarter, -quarter), childActualSize);
-			childBounds[5] = new Bounds(Center + new Vector3(quarter, -quarter, -quarter), childActualSize);
-			childBounds[6] = new Bounds(Center + new Vector3(-quarter, -quarter, quarter), childActualSize);
-			childBounds[7] = new Bounds(Center + new Vector3(quarter, -quarter, quarter), childActualSize);
-		}
-
-		/// <summary>
-		/// Private counterpart to the public Add method.
-		/// </summary>
-		/// <param name="obj">Object to add.</param>
-		/// <param name="objBounds">3D bounding box around the object.</param>
-		void SubAdd(T obj, Bounds objBounds)
-		{
-			// We know it fits at this level if we've got this far
-
-			// We always put things in the deepest possible child
-			// So we can skip some checks if there are children aleady
-			if (!HasChildren)
-			{
-				// Just add if few objects are here, or children would be below min size
-				if (objects.Count < NUM_OBJECTS_ALLOWED || (BaseLength / 2) < minSize)
-				{
-					OctreeObject newObj = new OctreeObject { Obj = obj, Bounds = objBounds };
-					objects.Add(newObj);
-					return; // We're done. No children yet
-				}
-
-				// Fits at this level, but we can go deeper. Would it fit there?
-				// Create the 8 children
-				int bestFitChild;
-				if (children == null)
-				{
-					Split();
-					if (children == null)
-					{
-						Debug.LogError("Child creation failed for an unknown reason. Early exit.");
-						return;
-					}
-
-					// Now that we have the new children, see if this node's existing objects would fit there
-					for (int i = objects.Count - 1; i >= 0; i--)
-					{
-						OctreeObject existingObj = objects[i];
-						// Find which child the object is closest to based on where the
-						// object's center is located in relation to the octree's center
-						bestFitChild = BestFitChild(existingObj.Bounds.center);
-						// Does it fit?
-						if (Encapsulates(children[bestFitChild].bounds, existingObj.Bounds))
-						{
-							children[bestFitChild]
-								.SubAdd(existingObj.Obj, existingObj.Bounds); // Go a level deeper					
-							objects.Remove(existingObj); // Remove from here
-						}
-					}
-				}
-			}
-
-			// Handle the new object we're adding now
-			int bestFit = BestFitChild(objBounds.center);
-			if (Encapsulates(children[bestFit].bounds, objBounds))
-			{
-				children[bestFit].SubAdd(obj, objBounds);
-			}
-			else
-			{
-				// Didn't fit in a child. We'll have to it to this node instead
-				OctreeObject newObj = new OctreeObject { Obj = obj, Bounds = objBounds };
-				objects.Add(newObj);
-			}
-		}
-
-		/// <summary>
-		/// Private counterpart to the public <see cref="Remove(T, Bounds)"/> method.
-		/// </summary>
-		/// <param name="obj">Object to remove.</param>
-		/// <param name="objBounds">3D bounding box around the object.</param>
-		/// <returns>True if the object was removed successfully.</returns>
-		bool SubRemove(T obj, Bounds objBounds)
-		{
-			bool removed = false;
-
-			for (int i = 0; i < objects.Count; i++)
-			{
-				if (objects[i].Obj.Equals(obj))
-				{
-					removed = objects.Remove(objects[i]);
-					break;
-				}
-			}
-
-			if (!removed && children != null)
-			{
-				int bestFitChild = BestFitChild(objBounds.center);
-				removed = children[bestFitChild].SubRemove(obj, objBounds);
-			}
-
-			if (removed && children != null)
-			{
-				// Check if we should merge nodes now that we've removed an item
-				if (ShouldMerge())
-				{
-					Merge();
-				}
-			}
-
-			return removed;
+			childBounds[0] = new Bounds(center + new Vector3(-quarter, quarter, -quarter), childActualSize);
+			childBounds[1] = new Bounds(center + new Vector3(quarter, quarter, -quarter), childActualSize);
+			childBounds[2] = new Bounds(center + new Vector3(-quarter, quarter, quarter), childActualSize);
+			childBounds[3] = new Bounds(center + new Vector3(quarter, quarter, quarter), childActualSize);
+			childBounds[4] = new Bounds(center + new Vector3(-quarter, -quarter, -quarter), childActualSize);
+			childBounds[5] = new Bounds(center + new Vector3(quarter, -quarter, -quarter), childActualSize);
+			childBounds[6] = new Bounds(center + new Vector3(-quarter, -quarter, quarter), childActualSize);
+			childBounds[7] = new Bounds(center + new Vector3(quarter, -quarter, quarter), childActualSize);
 		}
 
 		/// <summary>
 		/// Splits the octree into eight children.
 		/// </summary>
-		void Split()
-		{
-			float quarter = BaseLength / 4f;
-			float newLength = BaseLength / 2;
-			children = new BoundsOctreeNode<T>[8];
-			children[0] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(-quarter, quarter, -quarter));
-			children[1] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(quarter, quarter, -quarter));
-			children[2] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(-quarter, quarter, quarter));
-			children[3] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(quarter, quarter, quarter));
-			children[4] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(-quarter, -quarter, -quarter));
-			children[5] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(quarter, -quarter, -quarter));
-			children[6] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(-quarter, -quarter, quarter));
-			children[7] = new BoundsOctreeNode<T>(newLength, minSize, looseness,
-				Center + new Vector3(quarter, -quarter, quarter));
+		public void Split() {
+			if (_children != null) {
+				return;
+			}
+			float quarter = baseLength / 4f;
+			float newLength = baseLength / 2;
+			// Create the 8 children
+			_children = new BoundsOctreeNode<T>[8];
+			_children[0] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(-quarter, quarter, -quarter));
+			_children[1] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(quarter, quarter, -quarter));
+			_children[2] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(-quarter, quarter, quarter));
+			_children[3] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(quarter, quarter, quarter));
+			_children[4] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(-quarter, -quarter, -quarter));
+			_children[5] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(quarter, -quarter, -quarter));
+			_children[6] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(-quarter, -quarter, quarter));
+			_children[7] = new BoundsOctreeNode<T>(tree, newLength, center + new Vector3(quarter, -quarter, quarter));
+			// Now that we have the new children, see if this node's existing objects would fit there
+			foreach (var pair in _objects.ToArray()) {
+				var existingObj = pair.Key;
+				var objBounds = pair.Value;
+				// Find which child the object is closest to based on where the
+				// object's center is located in relation to the octree's center
+				int bestFitChildIndex = BestFitChild(objBounds.center);
+				var bestFitChildNode = _children[bestFitChildIndex];
+				// Does it fit?
+				if (bestFitChildNode.Add(existingObj, objBounds)) {
+					_objectsInChildren.Add(existingObj);
+					_objects.Remove(existingObj);
+				}
+			}
 		}
 
 		/// <summary>
@@ -684,32 +607,34 @@ namespace Octrees
 		/// Note: We only have to check one level down since a merge will never happen if the children already have children,
 		/// since THAT won't happen unless there are already too many objects to merge.
 		/// </summary>
-		void Merge()
-		{
-			// Note: We know children != null or we wouldn't be merging
-			for (int i = 0; i < 8; i++)
-			{
-				BoundsOctreeNode<T> curChild = children[i];
-				int numObjects = curChild.objects.Count;
-				for (int j = numObjects - 1; j >= 0; j--)
-				{
-					OctreeObject curObj = curChild.objects[j];
-					objects.Add(curObj);
+		public void Merge() {
+			if (_children == null) {
+				return;
+			}
+			foreach (var childNode in _children) {
+				childNode.Merge();
+				foreach (var pair in childNode._objects) {
+					_objects[pair.Key] = pair.Value;
 				}
 			}
-
 			// Remove the child nodes (and the objects in them - they've been added elsewhere now)
-			children = null;
+			_children = null;
 		}
-
+		
+		/// <summary>
+		/// Checks if this node encapsulates innerBounds.
+		/// </summary>
+		/// <param name="innerBounds">The inner bounds to check</param>
+		/// <returns>true if innerBounds is fully encapsulated in this node</returns>
+		public bool Encapsulates(Bounds innerBounds) => Encapsulates(this.bounds, innerBounds);
+		
 		/// <summary>
 		/// Checks if outerBounds encapsulates innerBounds.
 		/// </summary>
 		/// <param name="outerBounds">Outer bounds.</param>
 		/// <param name="innerBounds">Inner bounds.</param>
 		/// <returns>True if innerBounds is fully encapsulated by outerBounds.</returns>
-		static bool Encapsulates(Bounds outerBounds, Bounds innerBounds)
-		{
+		private static bool Encapsulates(Bounds outerBounds, Bounds innerBounds) {
 			return outerBounds.Contains(innerBounds.min) && outerBounds.Contains(innerBounds.max);
 		}
 
@@ -717,14 +642,14 @@ namespace Octrees
 		/// Checks if there are few enough objects in this node and its children that the children should all be merged into this.
 		/// </summary>
 		/// <returns>True there are less or the same abount of objects in this and its children than numObjectsAllowed.</returns>
-		bool ShouldMerge()
+		public bool ShouldMerge()
 		{
 			int totalObjects = objects.Count;
-			if (children != null)
+			if (_children != null)
 			{
-				foreach (BoundsOctreeNode<T> child in children)
+				foreach (BoundsOctreeNode<T> child in _children)
 				{
-					if (child.children != null)
+					if (child._children != null)
 					{
 						// If any of the *children* have children, there are definitely too many to merge,
 						// or the child woudl have been merged already
