@@ -35,20 +35,13 @@ namespace Octrees
 		private BoundsOctreeNode<T>[] _children = null;
 		
 		public bool hasChildren => _children != null;
-
-		// Bounds of potential children to this node. These are actual size (with looseness taken into account), not base size
+		
+		// Bounds of potential children to this node. These are adjusted size (with looseness taken into account), not base size
 		Bounds[] childBounds;
-
+		
 		// If there are already NUM_OBJECTS_ALLOWED in a node, we split it into children
 		// A generally good number seems to be something around 8-15
 		const int NUM_OBJECTS_ALLOWED = 8;
-
-		// An object in the octree
-		struct OctreeObject
-		{
-			public T Obj;
-			public Bounds Bounds;
-		}
 		
 		/// <summary>
 		/// Constructor.
@@ -78,7 +71,27 @@ namespace Octrees
 		public bool Contains(T obj) {
 			return _objects.ContainsKey(obj) || _objectsInChildren.Contains(obj);
 		}
-
+		
+		/// <summary>
+		/// Attempts to get the bounds of an entry in the node or its children
+		/// </summary>
+		/// <param name="obj">The entry to get the bounds for</param>
+		/// <param name="objBounds">The bounds of the object entry</param>
+		/// <returns>true if the object was found in the octree node or its children, false if it was not</returns>
+		public bool TryGetEntryBounds(T obj, out Bounds objBounds) {
+			if (_objects.TryGetValue(obj, out objBounds)) {
+				return true;
+			} else if (_children != null && _objectsInChildren.Contains(obj)) {
+				foreach (var childNode in _children) {
+					if (childNode.TryGetEntryBounds(obj, out objBounds)) {
+						return true;
+					}
+				}
+			}
+			objBounds = default;
+			return false;
+		}
+		
 		/// <summary>
 		/// Add an object.
 		/// </summary>
