@@ -9,7 +9,7 @@ namespace Octrees
 	public class BoundsOctreeNode<T> {
 		// If there are already NUM_OBJECTS_ALLOWED in a node, we split it into children
 		// A generally good number seems to be something around 8-15
-		const int NUM_OBJECTS_ALLOWED = 8;
+		const int MaxNodeEntries = 8;
 		
 		public struct BoxInfo {
 			public Vector3 center;
@@ -47,7 +47,7 @@ namespace Octrees
 		// The child entries for this node
 		private Dictionary<T,OctreeNodeSector> _childEntries;
 		// The subdivided nodes within this node
-		private BoundsOctreeNode<T>[] _childNodes = null;
+		private BoundsOctreeNode<T>[] _childNodes;
 		// Size/positioning info of potential children to this node
 		private BoxInfo[] _childBoxes;
 		
@@ -167,7 +167,7 @@ namespace Octrees
 			// So we can skip some checks if there are children aleady
 			if (_childNodes == null) {
 				// Just add if few objects are here, or children would be below min size
-				if (_entries.Count < NUM_OBJECTS_ALLOWED || _boxInfo.length <= tree.minNodeSize) {
+				if (_entries.Count < MaxNodeEntries || _boxInfo.length <= tree.minNodeSize) {
 					_entries[obj] = objBounds;
 					return;
 				}
@@ -216,7 +216,6 @@ namespace Octrees
 		/// <param name="newObjBounds">The new object bounds</param>
 		/// <param name="isRoot">If true, a check against the center of the object bounds of only this node (not its children) will be made. If false, no check will be made</param>
 		/// <param name="mergeIfAble">Merge any mergeable nodes in the octree</param>
-		/// <param name="addIfMissing">Add the object to this node if it fits and is not already added</param>
 		/// <returns>The result of attempting to move the object</returns>
 		public OctreeMoveResult Move(T obj, Bounds newObjBounds, bool isRoot, bool mergeIfAble = true) {
 			// try to move within this node
@@ -280,6 +279,7 @@ namespace Octrees
 		/// </summary>
 		/// <param name="checkBounds">The bounds to find the encapsulating sector for</param>
 		/// <param name="childNode">The child node that encapsulates the bounds</param>
+		/// <param name="childSector">The sector of the child node</param>
 		/// <returns>true if a node is found, false if it wasn't</returns>
 		public bool GetEncapsulatingChildSector(in Bounds checkBounds, out BoundsOctreeNode<T> childNode, out OctreeNodeSector childSector) {
 			childSector = OctreeUtils.GetSector(checkBounds.center - _boxInfo.center);
@@ -518,7 +518,6 @@ namespace Octrees
 			int bestFit = -1;
 			bool firstObj = true;
 			foreach (var pair in _entries) {
-				var obj = pair.Key;
 				var objBounds = pair.Value;
 				int newBestFit = (int)OctreeUtils.GetSector(objBounds.center - _boxInfo.center);
 				if (firstObj || newBestFit == bestFit) {
@@ -614,6 +613,7 @@ namespace Octrees
 				return;
 			}
 			_childNodes = new BoundsOctreeNode<T>[OctreeUtils.SubdivideCount];
+			_childEntries = new Dictionary<T, OctreeNodeSector>();
 			// Now that we have the new children, see if this node's existing objects would fit there
 			foreach (var (obj, objBounds) in _entries.ToArray()) {
 				// Find which child the object is closest to based on where the
@@ -651,7 +651,7 @@ namespace Octrees
 		/// <returns>True there are less or the same abount of objects in this and its children than numObjectsAllowed.</returns>
 		public bool ShouldMerge() {
 			int totalObjects = _entries.Count + (_childEntries?.Count ?? 0);
-			return totalObjects <= NUM_OBJECTS_ALLOWED;
+			return totalObjects <= MaxNodeEntries;
 		}
 		
 		
