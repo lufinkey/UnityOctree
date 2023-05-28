@@ -149,6 +149,9 @@ namespace Octrees
 			if (!_boxInfo.LooseEncapsulates(objBounds)) {
 				return false;
 			}
+			if (Remove(obj)) {
+				Debug.LogWarning("Calling Add when obj is already contained in node");
+			}
 			NoCheckAdd(obj, objBounds);
 			return true;
 		}
