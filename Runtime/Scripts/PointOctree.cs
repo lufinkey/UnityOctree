@@ -250,7 +250,7 @@ namespace Octrees
 		}
 		
 		/// <summary>
-		/// Finds the closest point in the given view direction
+		/// Finds the closest point in the given (2d) view direction
 		/// </summary>
 		/// <param name="origin">A tree position to compare against</param>
 		/// <param name="viewDirection">The view direction to check in</param>

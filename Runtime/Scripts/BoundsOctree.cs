@@ -38,21 +38,14 @@ namespace Octrees
 		
 		// Minimum side length that a node can be - essentially an alternative to having a max depth
 		public readonly float minNodeSize;
-		
-		// For collision visualisation. Automatically removed in builds.
-		#if UNITY_EDITOR
-		const int numCollisionsToSave = 4;
-		readonly Queue<Bounds> lastBoundsCollisionChecks = new Queue<Bounds>();
-		readonly Queue<Ray> lastRayCollisionChecks = new Queue<Ray>();
-		#endif
-		
+
 		/// <summary>
 		/// Constructor for the bounds octree.
 		/// </summary>
 		/// <param name="initialSize">Size of the sides of the initial node, in metres. The octree will never shrink smaller than this.</param>
 		/// <param name="initialCenter">Position of the centre of the initial node.</param>
 		/// <param name="minNodeSize">Nodes will stop splitting if the new nodes would be smaller than this (metres).</param>
-		/// <param name="looseness">Clamped between 1 and 2. Values > 1 let nodes overlap.</param>
+		/// <param name="looseness">A multiplier for what ratio of a nodes size should it be extended to. Should be between 0 and 1</param>
 		public BoundsOctree(float initialSize, Vector3 initialCenter, float minNodeSize, float looseness) {
 			if (minNodeSize > initialSize) {
 				Debug.LogWarning($"Minimum node size must be at least as big as the initial size. Was: {minNodeSize} Adjusted to: {initialSize}");
@@ -61,7 +54,7 @@ namespace Octrees
 			this.initialSize = initialSize;
 			this.minNodeSize = minNodeSize;
 			this.looseness = Mathf.Clamp(looseness, 1.0f, 2.0f);
-			this.rootNode = new BoundsOctreeNode<T>(this, initialSize, initialCenter);
+			this.rootNode = new BoundsOctreeNode<T>(this, initialCenter, initialSize);
 		}
 		
 		/// <summary>
@@ -94,6 +87,9 @@ namespace Octrees
 		/// <param name="maxGrowAttempts">The maximum number of times the octree should try to grow to encapsulate the given object</param>
 		/// <returns>true if the object could be added, false if it could not</returns>
 		public bool Add(T obj, Bounds objBounds, int maxGrowAttempts = DefaultMaxGrowAttempts) {
+			if (rootNode.Remove(obj)) {
+				Debug.LogWarning("Calling BoundsOctree.Add when an entry already exists. Use AddOrMove instead");
+			}
 			// Add object or expand the octree until it can be added
 			if (maxGrowAttempts == 0) {
 				return rootNode.Add(obj, objBounds);
@@ -164,7 +160,7 @@ namespace Octrees
 			var moveResult = Move(obj, objBounds, maxGrowAttempts:maxGrowAttempts, mergeIfAble:mergeIfAble);
 			switch (moveResult) {
 				case OctreeMoveResult.None:
-					return Add(obj, objBounds, maxGrowAttempts: maxGrowAttempts);
+					return Add(obj, objBounds, maxGrowAttempts:maxGrowAttempts);
 				
 				case OctreeMoveResult.Removed:
 					return false;
@@ -181,12 +177,24 @@ namespace Octrees
 		/// </summary>
 		/// <param name="checkBounds">bounds to check.</param>
 		/// <returns>True if there was a collision.</returns>
-		public bool IsColliding(in Bounds checkBounds) {
-			//#if UNITY_EDITOR
-			// For debugging
-			//AddCollisionCheck(checkBounds);
-			//#endif
-			return rootNode.IsColliding(checkBounds);
+		public bool IsIntersecting(in Bounds checkBounds) {
+			#if UNITY_EDITOR
+			debugDrawOptions?.DebugDrawBoundsIntersect(checkBounds);
+			#endif
+			return rootNode.IsIntersecting(checkBounds);
+		}
+		
+		/// <summary>
+		/// Returns an array of objects that intersect with the specified bounds, if any. Otherwise returns an empty array. See also: IsColliding.
+		/// </summary>
+		/// <param name="checkBounds">bounds to check.</param>
+		/// <param name="intersections">The resulting list of intersecting objects.</param>
+		/// <returns>Objects that intersect with the specified bounds.</returns>
+		public bool GetIntersecting(in Bounds checkBounds, ref List<T> intersections) {
+			#if UNITY_EDITOR
+			debugDrawOptions?.DebugDrawBoundsIntersect(checkBounds);
+			#endif
+			return rootNode.GetIntersecting(checkBounds, ref intersections) > 0;
 		}
 		
 		/// <summary>
@@ -195,41 +203,25 @@ namespace Octrees
 		/// <param name="checkRay">ray to check.</param>
 		/// <param name="maxDistance">distance to check.</param>
 		/// <returns>True if there was a collision.</returns>
-		public bool IsRayColliding(in Ray checkRay, float maxDistance) {
-			//#if UNITY_EDITOR
-			// For debugging
-			//AddCollisionCheck(checkRay);
-			//#endif
-			return rootNode.IsRayColliding(checkRay, maxDistance);
+		public bool Raycast(in Ray checkRay, float maxDistance) {
+			#if UNITY_EDITOR
+			debugDrawOptions?.DebugDrawRaycast(checkRay, maxDistance);
+			#endif
+			return rootNode.IsRayIntersecting(checkRay, maxDistance);
 		}
 		
 		/// <summary>
-		/// Returns an array of objects that intersect with the specified bounds, if any. Otherwise returns an empty array. See also: IsColliding.
+		/// Gets an array of objects that intersect with the specified ray, if any.
 		/// </summary>
-		/// <param name="checkBounds">bounds to check.</param>
-		/// <param name="collidingWith">list to store intersections.</param>
-		/// <returns>Objects that intersect with the specified bounds.</returns>
-		public void GetColliding(in Bounds checkBounds, List<T> collidingWith) {
-			//#if UNITY_EDITOR
-			// For debugging
-			//AddCollisionCheck(checkBounds);
-			//#endif
-			rootNode.GetColliding(checkBounds, collidingWith);
-		}
-		
-		/// <summary>
-		/// Returns an array of objects that intersect with the specified ray, if any. Otherwise returns an empty array. See also: IsColliding.
-		/// </summary>
-		/// <param name="checkRay">ray to check.</param>
-		/// <param name="collidingWith">list to store intersections.</param>
-		/// <param name="maxDistance">distance to check.</param>
+		/// <param name="checkRay">The ray to check intersections against</param>
+		/// <param name="collidingWith">The resulting list of intersecting objects</param>
+		/// <param name="maxDistance">The maximum distance to cast the ray</param>
 		/// <returns>Objects that intersect with the specified ray.</returns>
-		public void GetRayColliding(in Ray checkRay, List<T> collidingWith, float maxDistance = float.PositiveInfinity) {
-			//#if UNITY_EDITOR
-			// For debugging
-			//AddCollisionCheck(checkRay);
-			//#endif
-			rootNode.GetRayColliding(checkRay, collidingWith, maxDistance);
+		public bool Raycast(in Ray checkRay, ref List<T> collidingWith, float maxDistance = float.PositiveInfinity) {
+			#if UNITY_EDITOR
+			debugDrawOptions?.DebugDrawRaycast(checkRay, maxDistance);
+			#endif
+			return rootNode.GetRayIntersecting(checkRay, ref collidingWith, maxDistance) > 0;
 		}
 		
 		/// <summary>
@@ -240,84 +232,10 @@ namespace Octrees
 		public List<T> GetWithinFrustum(Camera camera) {
 			var planes = GeometryUtility.CalculateFrustumPlanes(camera);
 			var list = new List<T>();
-			rootNode.GetWithinFrustum(planes, list);
+			rootNode.GetWithinFrustum(planes, ref list);
 			return list;
 		}
-		
-		/// <summary>
-		/// Draws node boundaries visually for debugging.
-		/// Must be called from OnDrawGizmos externally. See also: DrawAllObjects.
-		/// </summary>
-		public void DrawAllBounds() {
-			rootNode.DrawAllBounds();
-		}
 
-		/// <summary>
-		/// Draws the bounds of all objects in the tree visually for debugging.
-		/// Must be called from OnDrawGizmos externally. See also: DrawAllBounds.
-		/// </summary>
-		public void DrawAllObjects() {
-			rootNode.DrawAllObjects();
-		}
-
-		// Intended for debugging. Must be called from OnDrawGizmos externally
-		// See also DrawAllBounds and DrawAllObjects
-		/// <summary>
-		/// Visualises collision checks from IsColliding and GetColliding.
-		/// Collision visualisation code is automatically removed from builds so that collision checks aren't slowed down.
-		/// </summary>
-		#if UNITY_EDITOR
-		public void DrawCollisionChecks()
-		{
-			int count = 0;
-			foreach (Bounds collisionCheck in lastBoundsCollisionChecks)
-			{
-				Gizmos.color = new Color(1.0f, 1.0f - ((float)count / numCollisionsToSave), 1.0f);
-				Gizmos.DrawCube(collisionCheck.center, collisionCheck.size);
-				count++;
-			}
-
-			foreach (Ray collisionCheck in lastRayCollisionChecks)
-			{
-				Gizmos.color = new Color(1.0f, 1.0f - ((float)count / numCollisionsToSave), 1.0f);
-				Gizmos.DrawRay(collisionCheck.origin, collisionCheck.direction);
-				count++;
-			}
-
-			Gizmos.color = Color.white;
-		}
-		#endif
-		
-		/// <summary>
-		/// Used for visualising collision checks with DrawCollisionChecks.
-		/// Automatically removed from builds so that collision checks aren't slowed down.
-		/// </summary>
-		/// <param name="checkBounds">bounds that were passed in to check for collisions.</param>
-		#if UNITY_EDITOR
-		private void AddCollisionCheck(Bounds checkBounds) {
-			lastBoundsCollisionChecks.Enqueue(checkBounds);
-			if (lastBoundsCollisionChecks.Count > numCollisionsToSave)
-			{
-				lastBoundsCollisionChecks.Dequeue();
-			}
-		}
-		#endif
-
-		/// <summary>
-		/// Used for visualising collision checks with DrawCollisionChecks.
-		/// Automatically removed from builds so that collision checks aren't slowed down.
-		/// </summary>
-		/// <param name="checkRay">ray that was passed in to check for collisions.</param>
-		#if UNITY_EDITOR
-		private void AddCollisionCheck(Ray checkRay) {
-			lastRayCollisionChecks.Enqueue(checkRay);
-			if (lastRayCollisionChecks.Count > numCollisionsToSave)
-			{
-				lastRayCollisionChecks.Dequeue();
-			}
-		}
-		#endif
-		
 		/// <summary>
 		/// Grow the octree to fit in all objects.
 		/// </summary>
@@ -327,25 +245,16 @@ namespace Octrees
 			int yDirection = direction.y >= 0 ? 1 : -1;
 			int zDirection = direction.z >= 0 ? 1 : -1;
 			BoundsOctreeNode<T> oldRoot = rootNode;
-			float half = rootNode.baseLength / 2;
-			float newLength = rootNode.baseLength * 2;
-			Vector3 newCenter = rootNode.center + new Vector3(xDirection * half, yDirection * half, zDirection * half);
+			float halfLen = rootNode.baseLength / 2.0f;
+			float newLength = rootNode.baseLength * 2.0f;
+			Vector3 newCenter = rootNode.center + new Vector3(xDirection * halfLen, yDirection * halfLen, zDirection * halfLen);
 			// Create a new, bigger octree root node
-			var newRootNode = new BoundsOctreeNode<T>(this, newLength, newCenter);
+			var newRootNode = new BoundsOctreeNode<T>(this, newCenter, newLength);
 			if (oldRoot.HasAnyObjects()) {
 				// Create 7 new octree children to go with the old root as children of the new root
-				int rootPos = newRootNode.BestFitChild(oldRoot.center);
-				BoundsOctreeNode<T>[] children = new BoundsOctreeNode<T>[8];
-				for (int i = 0; i < 8; i++) {
-					if (i == rootPos)  {
-						children[i] = oldRoot;
-					} else {
-						xDirection = i % 2 == 0 ? -1 : 1;
-						yDirection = i > 3 ? -1 : 1;
-						zDirection = (i < 2 || (i > 3 && i < 6)) ? -1 : 1;
-						children[i] = new BoundsOctreeNode<T>(this, oldRoot.baseLength, newCenter + new Vector3(xDirection * half, yDirection * half, zDirection * half));
-					}
-				}
+				var rootSector = OctreeUtils.GetSector(oldRoot.center - newCenter);
+				var children = new BoundsOctreeNode<T>[OctreeUtils.SubdivideCount];
+				children[(int)rootSector] = oldRoot;
 				// Attach the new children to the new root node
 				newRootNode.SetChildren(children);
 			}
@@ -358,5 +267,61 @@ namespace Octrees
 		private void ShrinkIfPossible() {
 			rootNode = rootNode.ShrinkIfPossible(initialSize);
 		}
+		
+		
+		
+		#region Gizmos / Debug Draw
+		/// <summary>
+		/// Draws node boundaries visually for debugging.
+		/// Must be called from OnDrawGizmos externally. See also: DrawAllObjects.
+		/// </summary>
+		public void DrawNodeBoundsGizmos() {
+			rootNode.DrawNodeBoundsGizmos();
+		}
+
+		/// <summary>
+		/// Draws the bounds of all objects in the tree visually for debugging.
+		/// Must be called from OnDrawGizmos externally. See also: DrawAllBounds.
+		/// </summary>
+		public void DrawObjectBoundsGizmos() {
+			rootNode.DrawObjectBoundsGizmos();
+		}
+		
+		#if UNITY_EDITOR
+		public struct DebugDrawOptions {
+			public float duration;
+			public Color boundsIntersectColor;
+			public Color raycastColor;
+			public OctreeUtils.PointConverter treeToWorldPointConverter;
+			
+			public static DebugDrawOptions Default => new DebugDrawOptions() {
+				duration = 1.0f,
+				boundsIntersectColor = Color.green,
+				raycastColor = Color.green
+			};
+
+			public void DebugDrawBoundsIntersect(Bounds bounds) {
+				OctreeUtils.DebugDrawBounds(bounds, boundsIntersectColor, duration, depthTest:true, treeToWorldPointConverter);
+			}
+			
+			public void DebugDrawRaycast(Ray ray, float distance) {
+				if (treeToWorldPointConverter != null) {
+					Vector3 newOrigin = treeToWorldPointConverter(ray.origin);
+					Vector3 newDirEndPoint = treeToWorldPointConverter(ray.origin + ray.direction);
+					var newDir = (newDirEndPoint - newOrigin);
+					ray = new Ray(newOrigin, newDir);
+				}
+				if (distance < (float.MaxValue / 2.0f)) {
+					Debug.DrawRay(ray.origin, (ray.direction * distance), raycastColor, duration, depthTest:true);
+				}
+				else {
+					Debug.DrawRay(ray.origin, ray.direction, raycastColor, duration, depthTest:true);
+				}
+			}
+		}
+		
+		public DebugDrawOptions? debugDrawOptions;
+		#endif
+		#endregion
 	}
 }
