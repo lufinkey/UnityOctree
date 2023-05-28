@@ -87,9 +87,6 @@ namespace Octrees
 		/// <param name="maxGrowAttempts">The maximum number of times the octree should try to grow to encapsulate the given object</param>
 		/// <returns>true if the object could be added, false if it could not</returns>
 		public bool Add(T obj, Bounds objBounds, int maxGrowAttempts = DefaultMaxGrowAttempts) {
-			if (rootNode.Remove(obj)) {
-				Debug.LogWarning("Calling BoundsOctree.Add when an entry already exists. Use AddOrMove instead");
-			}
 			// Add object or expand the octree until it can be added
 			if (maxGrowAttempts == 0) {
 				return rootNode.Add(obj, objBounds);
@@ -99,7 +96,7 @@ namespace Octrees
 				Grow(objBounds.center - rootNode.center);
 				count++;
 				if (count >= maxGrowAttempts) {
-					Debug.LogError($"Aborted Add operation as it seemed to be going on forever ({count}) attempts at growing the octree.");
+					Debug.LogError($"Add operation took too long. ({count}) attempts at growing the octree.");
 					return false;
 				}
 			}
