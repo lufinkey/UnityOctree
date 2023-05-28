@@ -28,8 +28,8 @@ namespace Octrees
 		
 		public const int DefaultMaxGrowAttempts = 20;
 		
-		// Should be a value between 1 and 2. A multiplier for the base size of a node.
-		// 1.0 is a "normal" octree, while values > 1 have overlap
+		// Should be a value between 0 and 1. A multiplier for the base size of a node.
+		// 0 is a "normal" octree, while values > 0 have overlap between nodes
 		public readonly float looseness;
 		
 		// Size that the octree was on creation
