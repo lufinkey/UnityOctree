@@ -11,7 +11,7 @@ namespace Octrees
 		// A generally good number seems to be something around 8-15
 		const int MaxNodeEntries = 8;
 		
-		public struct BoxInfo {
+		private struct BoxInfo {
 			public Vector3 center;
 			public float length;
 			public Bounds strictBounds;
@@ -32,8 +32,8 @@ namespace Octrees
 			
 			public bool Encapsulates(in Bounds cmpBounds) {
 				return LooseEncapsulates(cmpBounds)
-					// check that the center of the given bounds is within the strict bounds
-					&& strictBounds.Contains(cmpBounds.center);
+				       // check that the center of the given bounds is within the strict bounds
+				       && strictBounds.Contains(cmpBounds.center);
 			}
 		}
 		
@@ -110,6 +110,20 @@ namespace Octrees
 		}
 		
 		/// <summary>
+		/// Checks if the given bounds can be encapsulated in the bounds of this node
+		/// </summary>
+		/// <param name="checkBounds">The bounds to check if encapsulated</param>
+		/// <returns>true if the given bounds are encapsulated in this node, false otherwise</returns>
+		public bool Encapsulates(in Bounds checkBounds) => _boxInfo.Encapsulates(checkBounds);
+		
+		/// <summary>
+		/// Checks if the given bounds can be encapsulated in the loose bounds this node
+		/// </summary>
+		/// <param name="checkBounds">The bounds to check if encapsulated</param>
+		/// <returns>true if the given bounds are encapsulated in this node, false otherwise</returns>
+		public bool LooseEncapsulates(in Bounds checkBounds) => _boxInfo.LooseEncapsulates(checkBounds);
+		
+		/// <summary>
 		/// Attempts to get the bounds of an entry in the node or its children
 		/// </summary>
 		/// <param name="obj">The entry to get the bounds for</param>
@@ -126,20 +140,6 @@ namespace Octrees
 		}
 		
 		/// <summary>
-		/// Checks if the given bounds is encapsulated in this node
-		/// </summary>
-		/// <param name="checkBounds">The bounds to check if encapsulated</param>
-		/// <returns>true if the given bounds are encapsulated in this node, false otherwise</returns>
-		public bool Encapsulates(in Bounds checkBounds) => _boxInfo.Encapsulates(checkBounds);
-		
-		/// <summary>
-		/// Checks if the given bounds is encapsulated in this node
-		/// </summary>
-		/// <param name="checkBounds">The bounds to check if encapsulated</param>
-		/// <returns>true if the given bounds are encapsulated in this node, false otherwise</returns>
-		public bool LooseEncapsulates(in Bounds checkBounds) => _boxInfo.LooseEncapsulates(checkBounds);
-
-		/// <summary>
 		/// Add or set an entry in this node or its children
 		/// </summary>
 		/// <param name="obj">The object to add</param>
@@ -150,7 +150,7 @@ namespace Octrees
 				return false;
 			}
 			if (Remove(obj)) {
-				Debug.LogWarning("Calling Add when obj is already contained in node");
+				Debug.LogWarning("Calling Add when obj is already contained within node");
 			}
 			NoCheckAdd(obj, objBounds);
 			return true;
@@ -220,7 +220,7 @@ namespace Octrees
 		public OctreeMoveResult Move(T obj, Bounds newObjBounds, bool isRoot, bool mergeIfAble = true) {
 			// try to move within this node
 			if (_entries.Remove(obj)) {
-				if (isRoot ? _boxInfo.LooseEncapsulates(newObjBounds) : _boxInfo.Encapsulates(newObjBounds)) {
+				if (_boxInfo.LooseEncapsulates(newObjBounds)) {
 					NoCheckAdd(obj, newObjBounds);
 					return OctreeMoveResult.Moved;
 				}
@@ -244,7 +244,7 @@ namespace Octrees
 						case OctreeMoveResult.Removed:
 							// removed from child
 							_childEntries.Remove(obj);
-							if (isRoot ? _boxInfo.LooseEncapsulates(newObjBounds) : _boxInfo.Encapsulates(newObjBounds)) {
+							if (_boxInfo.LooseEncapsulates(newObjBounds)) {
 								// still fits within this node
 								_entries[obj] = newObjBounds;
 								return OctreeMoveResult.Moved;
@@ -260,7 +260,7 @@ namespace Octrees
 					oldChildNode.Remove(obj, mergeIfAble:mergeIfAble);
 					_childEntries.Remove(obj);
 					// re-add if still inside this node
-					if (isRoot ? _boxInfo.LooseEncapsulates(newObjBounds) : _boxInfo.Encapsulates(newObjBounds)) {
+					if (_boxInfo.LooseEncapsulates(newObjBounds)) {
 						NoCheckAdd(obj, newObjBounds);
 						return OctreeMoveResult.Moved;
 					}
@@ -281,11 +281,11 @@ namespace Octrees
 		/// <param name="childNode">The child node that encapsulates the bounds</param>
 		/// <param name="childSector">The sector of the child node</param>
 		/// <returns>true if a node is found, false if it wasn't</returns>
-		public bool GetEncapsulatingChildSector(in Bounds checkBounds, out BoundsOctreeNode<T> childNode, out OctreeNodeSector childSector) {
+		private bool GetEncapsulatingChildSector(in Bounds checkBounds, out BoundsOctreeNode<T> childNode, out OctreeNodeSector childSector) {
 			childSector = OctreeUtils.GetSector(checkBounds.center - _boxInfo.center);
 			int childSectorIndex = (int)childSector;
 			var childBoxInfo = _childBoxes[childSectorIndex];
-			if (!childBoxInfo.Encapsulates(checkBounds)) {
+			if (!childBoxInfo.LooseEncapsulates(checkBounds)) {
 				childNode = null;
 				return false;
 			}
@@ -303,7 +303,7 @@ namespace Octrees
 		/// <param name="checkBounds">The inner bounds to check if encapsulated</param>
 		/// <returns>The node which fully encapsulates the given bounds, or null if no node fully encapsulates the given bounds</returns>
 		public BoundsOctreeNode<T> FindEncapsulatingNode(in Bounds checkBounds) {
-			if (_boxInfo.Encapsulates(checkBounds)) {
+			if (_boxInfo.LooseEncapsulates(checkBounds)) {
 				if (_childNodes != null) {
 					// check best fit child
 					var childSector = OctreeUtils.GetSector(checkBounds.center - _boxInfo.center);
@@ -388,8 +388,7 @@ namespace Octrees
 		/// <returns>True if there was a collision.</returns>
 		public bool IsRayIntersecting(in Ray checkRay, float maxDistance) {
 			// Is the input ray at least partially in this node?
-			float distance;
-			if (!_boxInfo.looseBounds.IntersectRay(checkRay, out distance) || distance > maxDistance) {
+			if (!_boxInfo.looseBounds.IntersectRay(checkRay, out float distance) || distance > maxDistance) {
 				return false;
 			}
 			// Check against any objects in this node
@@ -417,9 +416,8 @@ namespace Octrees
 		/// <param name="result">The objects intersecting with the ray</param>
 		/// <returns>The total number of ray intersections in this node or its children</returns>
 		public int GetRayIntersecting(in Ray checkRay, ref List<T> result, float maxDistance) {
-			float distance;
 			// Is the input ray at least partially in this node?
-			if (!_boxInfo.looseBounds.IntersectRay(checkRay, out distance) || distance > maxDistance) {
+			if (!_boxInfo.looseBounds.IntersectRay(checkRay, out float distance) || distance > maxDistance) {
 				return 0;
 			}
 			int total = 0;
