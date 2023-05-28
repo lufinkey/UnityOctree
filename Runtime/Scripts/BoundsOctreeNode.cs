@@ -324,56 +324,84 @@ namespace Octrees
 		/// Check if the specified bounds intersect with anything in the tree. See also: GetColliding.
 		/// </summary>
 		/// <param name="checkBounds">Bounds to check.</param>
+		/// <param name="filter">Optionally filters which entries in the tree should be checked for intersection</param>
 		/// <returns>True if there was a collision.</returns>
-		public bool IsIntersecting(in Bounds checkBounds) {
+		public bool IsIntersecting(in Bounds checkBounds, BoundsOctree<T>.EntryFilter filter = null) {
 			// Are the input bounds at least partially in this node?
 			if (!_boxInfo.looseBounds.Intersects(checkBounds)) {
 				return false;
 			}
 			// Check against any objects in this node
-			foreach (var pair in _entries) {
-				if (pair.Value.Intersects(checkBounds)) {
-					return true;
+			if (filter == null) {
+				foreach (var pair in _entries) {
+					if (pair.Value.Intersects(checkBounds)) {
+						return true;
+					}
+				}
+			} else {
+				foreach (var pair in _entries) {
+					if (!filter(pair.Key, pair.Value)) {
+						continue;
+					}
+					if (pair.Value.Intersects(checkBounds)) {
+						return true;
+					}
 				}
 			}
 			// Check children
 			if (_childNodes != null) {
 				foreach (var childNode in _childNodes) {
-					if (childNode != null && childNode.IsIntersecting(checkBounds)) {
+					if (childNode != null && childNode.IsIntersecting(checkBounds, filter)) {
 						return true;
 					}
 				}
 			}
 			return false;
 		}
-
+		
 		/// <summary>
 		/// Gets an array of objects that intersect with the specified bounds, if any.
 		/// </summary>
 		/// <param name="checkBounds">The bounds to check intersection against</param>
 		/// <param name="results">The list of objects intersecting the given bounds</param>
+		/// <param name="filter">Optionally filters which entries in the tree should be checked for intersection</param>
 		/// <returns>The total number of intersections in this node or its children</returns>
-		public int GetIntersecting(in Bounds checkBounds, ref List<T> results) {
+		public int GetIntersecting(in Bounds checkBounds, ref List<T> results, BoundsOctree<T>.EntryFilter filter = null) {
 			// Are the input bounds at least partially in this node?
 			if (!_boxInfo.looseBounds.Intersects(checkBounds)) {
 				return 0;
 			}
 			int totalIntersections = 0;
 			// Check against any objects in this node
-			foreach (var pair in _entries) {
-				if (pair.Value.Intersects(checkBounds)) {
-					if (results == null) {
-						results = new List<T>();
+			if (filter == null) {
+				foreach (var pair in _entries) {
+					if (pair.Value.Intersects(checkBounds)) {
+						if (results == null) {
+							results = new List<T>();
+						}
+						results.Add(pair.Key);
+						totalIntersections++;
 					}
-					results.Add(pair.Key);
-					totalIntersections++;
+				}
+			} else {
+				foreach (var pair in _entries) {
+					if (!filter(pair.Key, pair.Value)) {
+						continue;
+					}
+					if (pair.Value.Intersects(checkBounds)) {
+						if (results == null) {
+							results = new List<T>();
+						}
+						results.Add(pair.Key);
+						totalIntersections++;
+					}
 				}
 			}
 			// Check children
 			if (_childNodes != null) {
 				foreach (var childNode in _childNodes) {
 					if (childNode != null) {
-						totalIntersections += childNode.GetIntersecting(checkBounds, ref results);
+						totalIntersections += childNode.GetIntersecting(checkBounds, ref results, filter);
 					}
 				}
 			}
@@ -381,26 +409,38 @@ namespace Octrees
 		}
 		
 		/// <summary>
-		/// Check if the specified ray intersects with anything in the tree. See also: GetColliding.
+		/// Check if the specified ray intersects with anything in the tree. <seealso cref="IsIntersecting"/>
 		/// </summary>
-		/// <param name="checkRay">Ray to check.</param>
-		/// <param name="maxDistance">Distance to check.</param>
+		/// <param name="checkRay">The ray to check intersections against</param>
+		/// <param name="maxDistance">The maximum distance to cast the ray</param>
+		/// <param name="filter">Optionally filters which entries in the tree should be checked for intersection</param>
 		/// <returns>True if there was a collision.</returns>
-		public bool IsRayIntersecting(in Ray checkRay, float maxDistance) {
+		public bool IsRayIntersecting(in Ray checkRay, float maxDistance, BoundsOctree<T>.EntryFilter filter = null) {
 			// Is the input ray at least partially in this node?
 			if (!_boxInfo.looseBounds.IntersectRay(checkRay, out float distance) || distance > maxDistance) {
 				return false;
 			}
 			// Check against any objects in this node
-			foreach (var pair in _entries) {
-				if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
-					return true;
+			if (filter == null) {
+				foreach (var pair in _entries) {
+					if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
+						return true;
+					}
+				}
+			} else {
+				foreach (var pair in _entries) {
+					if (!filter(pair.Key, pair.Value)) {
+						continue;
+					}
+					if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
+						return true;
+					}
 				}
 			}
 			// Check children
 			if (_childNodes != null) {
 				foreach (var childNode in _childNodes) {
-					if (childNode != null && childNode.IsRayIntersecting(checkRay, maxDistance)) {
+					if (childNode != null && childNode.IsRayIntersecting(checkRay, maxDistance, filter)) {
 						return true;
 					}
 				}
@@ -413,57 +453,98 @@ namespace Octrees
 		/// </summary>
 		/// <param name="checkRay">The ray to check intersections against</param>
 		/// <param name="maxDistance">The maximum distance to cast the ray</param>
-		/// <param name="result">The objects intersecting with the ray</param>
+		/// <param name="results">The objects intersecting with the ray</param>
+		/// <param name="filter">Optionally filters which entries in the tree should be checked for intersection</param>
 		/// <returns>The total number of ray intersections in this node or its children</returns>
-		public int GetRayIntersecting(in Ray checkRay, ref List<T> result, float maxDistance) {
+		public int GetRayIntersecting(in Ray checkRay, ref List<T> results, float maxDistance, BoundsOctree<T>.EntryFilter filter = null) {
 			// Is the input ray at least partially in this node?
 			if (!_boxInfo.looseBounds.IntersectRay(checkRay, out float distance) || distance > maxDistance) {
 				return 0;
 			}
-			int total = 0;
+			int totalIntersections = 0;
 			// Check against any objects in this node
-			foreach (var pair in _entries) {
-				if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
-					if (result == null) {
-						result = new List<T>();
+			if (filter == null) {
+				foreach (var pair in _entries) {
+					if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
+						if (results == null) {
+							results = new List<T>();
+						}
+						results.Add(pair.Key);
+						totalIntersections++;
 					}
-					result.Add(pair.Key);
-					total++;
+				}
+			} else {
+				foreach (var pair in _entries) {
+					if (!filter(pair.Key, pair.Value)) {
+						continue;
+					}
+					if (pair.Value.IntersectRay(checkRay, out distance) && distance <= maxDistance) {
+						if (results == null) {
+							results = new List<T>();
+						}
+						results.Add(pair.Key);
+						totalIntersections++;
+					}
 				}
 			}
 			// Check children
 			if (_childNodes != null) {
 				foreach (var childNode in _childNodes) {
 					if (childNode != null) {
-						total += childNode.GetRayIntersecting(checkRay, ref result, maxDistance);
+						totalIntersections += childNode.GetRayIntersecting(checkRay, ref results, maxDistance, filter);
 					}
 				}
 			}
-			return total;
+			return totalIntersections;
 		}
 		
-		public void GetWithinFrustum(Plane[] planes, ref List<T> results) {
+		/// <summary>
+		/// Gets all the objects that lie within the given frustum planes
+		/// </summary>
+		/// <param name="planes">The planes that represent the frustum</param>
+		/// <param name="results">The objects from this node or its children that are inside the frustum</param>
+		/// <param name="filter">Optionally filters which entries in the tree should be checked against the frustum</param>
+		/// <returns>The total number of objects that are inside the frustum</returns>
+		public int GetWithinFrustum(Plane[] planes, ref List<T> results, BoundsOctree<T>.EntryFilter filter = null) {
 			// Is the input node inside the frustum?
 			if (!GeometryUtility.TestPlanesAABB(planes, _boxInfo.looseBounds)) {
-				return;
+				return 0;
 			}
+			int totalInFrustum = 0;
 			// Check against any objects in this node
-			foreach (var pair in _entries) {
-				if (GeometryUtility.TestPlanesAABB(planes, pair.Value)) {
-					if (results == null) {
-						results = new List<T>();
+			if (filter == null) {
+				foreach (var pair in _entries) {
+					if (GeometryUtility.TestPlanesAABB(planes, pair.Value)) {
+						if (results == null) {
+							results = new List<T>();
+						}
+						results.Add(pair.Key);
+						totalInFrustum++;
 					}
-					results.Add(pair.Key);
+				}
+			} else {
+				foreach (var pair in _entries) {
+					if (!filter(pair.Key, pair.Value)) {
+						continue;
+					}
+					if (GeometryUtility.TestPlanesAABB(planes, pair.Value)) {
+						if (results == null) {
+							results = new List<T>();
+						}
+						results.Add(pair.Key);
+						totalInFrustum++;
+					}
 				}
 			}
 			// Check children
 			if (_childNodes != null) {
 				foreach (var childNode in _childNodes) {
 					if (childNode != null) {
-						childNode.GetWithinFrustum(planes, ref results);
+						totalInFrustum += childNode.GetWithinFrustum(planes, ref results);
 					}
 				}
 			}
+			return totalInFrustum;
 		}
 		
 		/// <summary>
