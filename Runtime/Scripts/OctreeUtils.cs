@@ -30,10 +30,10 @@ namespace Octrees {
 		
 		public delegate Vector3 PointConverter(Vector3 point);
 		
-		public static OctreeNodeSector GetSector(Vector3 offsetFromCenter) {
-			return (OctreeNodeSector)((offsetFromCenter.x > 0 ? (byte)OctreeAxisFlags.X : 0)
-			       | (offsetFromCenter.y > 0 ? (byte)OctreeAxisFlags.Y : 0)
-			       | (offsetFromCenter.z > 0 ? (byte)OctreeAxisFlags.Z : 0));
+		public static OctreeNodeSector GetSector(Vector3 direction) {
+			return (OctreeNodeSector)((direction.x > 0 ? (byte)OctreeAxisFlags.X : 0)
+			       | (direction.y > 0 ? (byte)OctreeAxisFlags.Y : 0)
+			       | (direction.z > 0 ? (byte)OctreeAxisFlags.Z : 0));
 		}
 		
 		public static readonly IReadOnlyDictionary<OctreeNodeSector,Vector3> SectorDirections = new Dictionary<OctreeNodeSector, Vector3>() {
