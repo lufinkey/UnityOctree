@@ -48,16 +48,16 @@ namespace Octrees
 		/// Constructor for the point octree.
 		/// </summary>
 		/// <param name="initialSize">Size of the sides of the initial node. The octree will never shrink smaller than this.</param>
-		/// <param name="initialWorldPos">Position of the centre of the initial node.</param>
+		/// <param name="initialCenter">Position of the centre of the initial node.</param>
 		/// <param name="minNodeSize">Nodes will stop splitting if the new nodes would be smaller than this.</param>
-		public PointOctree(float initialSize, Vector3 initialWorldPos, float minNodeSize) {
+		public PointOctree(float initialSize, Vector3 initialCenter, float minNodeSize) {
 			if (minNodeSize > initialSize) {
 				Debug.LogWarning($"Minimum node size must be at least as big as the initial size. Was: {minNodeSize} Adjusted to: {initialSize}");
 				minNodeSize = initialSize;
 			}
 			this.initialSize = initialSize;
 			this.minNodeSize = minNodeSize;
-			_rootNode = new PointOctreeNode<T>(this, initialWorldPos, initialSize);
+			_rootNode = new PointOctreeNode<T>(this, initialCenter, initialSize);
 		}
 		
 		
