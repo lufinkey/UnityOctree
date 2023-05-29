@@ -25,18 +25,20 @@ namespace Octrees
 	// Using a LINQ expression is worse again than Foreach.
 	public class BoundsOctree<T> {
 		public delegate bool EntryFilter(in T obj, in Bounds objBounds);
+		public delegate bool NodeFilter(in BoundsOctreeNode<T> node);
+		public delegate bool EntryFitnessCalculator(in T obj, in Bounds bounds, out float fitness);
 		
 		public const int DefaultMaxGrowAttempts = 20;
-		
-		// Should be a value between 0 and 1. A multiplier for the base size of a node.
-		// 0 is a "normal" octree, while values > 0 have overlap between nodes
-		public readonly float looseness;
-		
+
 		// Size that the octree was on creation
 		public readonly float initialSize;
 		
 		// Minimum side length that a node can be - essentially an alternative to having a max depth
 		public readonly float minNodeSize;
+		
+		// Should be a value between 0 and 1. A multiplier for the extended size of a node.
+		// 0 is a "normal" octree, while values > 0 have overlap between nodes
+		public readonly float looseness;
 		
 		// Root node of the octree
 		private BoundsOctreeNode<T> _rootNode;
@@ -59,6 +61,9 @@ namespace Octrees
 			_rootNode = new BoundsOctreeNode<T>(this, initialCenter, initialSize);
 		}
 		
+		
+		
+		#region Properties
 		/// <summary>
 		/// The strict bounds of the root node of the octree
 		/// </summary>
@@ -73,7 +78,11 @@ namespace Octrees
 		/// The number of objects in this octree
 		/// </summary>
 		public int Count => _rootNode.Count;
+		#endregion
 		
+		
+		
+		#region Add / Remove / Move / Access
 		/// <summary>
 		/// Tells if the octree contains the given object
 		/// </summary>
@@ -82,10 +91,10 @@ namespace Octrees
 		public bool Contains(T obj) => _rootNode.Contains(obj);
 		
 		/// <summary>
-		/// Add an object.
+		/// Add an object the the tree. Don't call this when the Octree already has the object within it, as it will result in an non-optimal move operation. Use <see cref="AddOrMove"/> instead.
 		/// </summary>
-		/// <param name="obj">Object to add.</param>
-		/// <param name="objBounds">3D bounding box around the object.</param>
+		/// <param name="obj">The object to add to the tree</param>
+		/// <param name="objBounds">The 3D bounding box around the object</param>
 		/// <param name="maxGrowAttempts">The maximum number of times the octree should try to grow to encapsulate the given object</param>
 		/// <returns>true if the object could be added, false if it could not</returns>
 		public bool Add(T obj, Bounds objBounds, int maxGrowAttempts = DefaultMaxGrowAttempts) {
@@ -106,13 +115,13 @@ namespace Octrees
 		}
 		
 		/// <summary>
-		/// Remove an object. Makes the assumption that the object only exists once in the tree.
+		/// Remove an object from the tree
 		/// </summary>
-		/// <param name="obj">Object to remove.</param>
-		/// <param name="mergeIfAble">Whether octree nodes should get merged if they're able to be</param>
+		/// <param name="obj">The object to remove</param>
+		/// <param name="mergeIfAble">Controls whether octree nodes should get merged if they're able to be</param>
 		/// <returns>True if the object was removed successfully.</returns>
 		public bool Remove(T obj, bool mergeIfAble = true) {
-			bool removed = _rootNode.Remove(obj, mergeIfAble:mergeIfAble);
+			bool removed = _rootNode.Remove(obj, isRoot:true, mergeIfAble:mergeIfAble);
 			// See if we can shrink the octree down now that we've removed the item
 			if (removed && mergeIfAble) {
 				ShrinkIfPossible();
@@ -170,7 +179,11 @@ namespace Octrees
 			Debug.LogError($"Unknown octree move result {moveResult}");
 			return false;
 		}
+		#endregion
 		
+		
+		
+		#region Search / Intersection
 		/// <summary>
 		/// Check if the specified bounds intersect with anything in the tree. <seealso cref="GetIntersecting"/>
 		/// </summary>
@@ -192,6 +205,7 @@ namespace Octrees
 		/// <param name="filter">Filters which entries in the tree should be checked for intersection</param>
 		/// <returns>Objects that intersect with the specified bounds.</returns>
 		public bool GetIntersecting(in Bounds checkBounds, ref List<T> results, EntryFilter filter = null) {
+			results?.Clear();
 			#if UNITY_EDITOR
 			debugDrawOptions?.DebugDrawBoundsIntersect(checkBounds);
 			#endif
@@ -221,6 +235,7 @@ namespace Octrees
 		/// <param name="filter">Filters which entries in the tree should be checked for intersection</param>
 		/// <returns>Objects that intersect with the specified ray.</returns>
 		public bool Raycast(in Ray checkRay, ref List<T> results, float maxDistance = float.PositiveInfinity, EntryFilter filter = null) {
+			results?.Clear();
 			#if UNITY_EDITOR
 			debugDrawOptions?.DebugDrawRaycast(checkRay, maxDistance);
 			#endif
@@ -231,14 +246,33 @@ namespace Octrees
 		/// Find all the nodes that are visible in the given camera frustum
 		/// </summary>
 		/// <param name="camera">The camera viewing the octree</param>
+		/// <param name="results">The resulting list of objects which are inside the frustum</param>
+		/// <param name="filter">Optionally filters which entries in the tree should be checked against the frustum</param>
 		/// <returns>A list of objects in the octree in view of the camera</returns>
-		public List<T> GetWithinFrustum(Camera camera) {
+		public bool GetWithinFrustum(Camera camera, ref List<T> results, BoundsOctree<T>.EntryFilter filter = null) {
+			results?.Clear();
 			var planes = GeometryUtility.CalculateFrustumPlanes(camera);
 			var list = new List<T>();
-			_rootNode.GetWithinFrustum(planes, ref list);
-			return list;
+			return _rootNode.GetWithinFrustum(planes, ref list, filter) > 0;
 		}
 		
+		/// <summary>
+		/// Finds the best matching object in the octree using a given fitness calculator and node filter
+		/// </summary>
+		/// <param name="fitnessCalculator">Calculates the "fitness" of entries (how similar it is to the desired result). Lower return values are ranked as more "fit".</param>
+		/// <param name="nodeFilter">Determines which nodes should be searched</param>
+		/// <param name="matchingObj">The closest match found in the Octree, or `default` if not found</param>
+		/// <param name="matchFitness">The calculated "fitness" value of the matching object</param>
+		/// <param name="filter">Optionally filters objects to consider (return true to consider the object, false to not consider it)</param>
+		/// <returns>true if an object could be found, false otherwise</returns>
+		public bool FindBestMatch(EntryFitnessCalculator fitnessCalculator, NodeFilter nodeFilter, out T matchingObj, out float matchFitness, EntryFilter filter = null) {
+			return _rootNode.FindBestMatch(fitnessCalculator, nodeFilter, out matchingObj, out matchFitness, filter);
+		}
+		#endregion
+		
+		
+		
+		#region Node Manipulation
 		/// <summary>
 		/// Grow the octree to fit in all objects.
 		/// </summary>
@@ -247,7 +281,7 @@ namespace Octrees
 			int xDirection = direction.x >= 0 ? 1 : -1;
 			int yDirection = direction.y >= 0 ? 1 : -1;
 			int zDirection = direction.z >= 0 ? 1 : -1;
-			BoundsOctreeNode<T> oldRoot = _rootNode;
+			var oldRoot = _rootNode;
 			float halfLen = oldRoot.baseLength / 2.0f;
 			float newLength = oldRoot.baseLength * 2.0f;
 			Vector3 newCenter = oldRoot.center + new Vector3(xDirection * halfLen, yDirection * halfLen, zDirection * halfLen);
@@ -270,13 +304,14 @@ namespace Octrees
 		private void ShrinkIfPossible() {
 			_rootNode = _rootNode.ShrinkIfPossible(initialSize);
 		}
+		#endregion
 		
 		
 		
 		#region Gizmos / Debug Draw
 		/// <summary>
 		/// Draws node boundaries visually for debugging.
-		/// Must be called from OnDrawGizmos externally. See also: DrawAllObjects.
+		/// Must be called from OnDrawGizmos externally. <seealso cref="DrawObjectBoundsGizmos"/>
 		/// </summary>
 		public void DrawNodeBoundsGizmos() {
 			_rootNode.DrawNodeBoundsGizmos();
@@ -284,7 +319,7 @@ namespace Octrees
 
 		/// <summary>
 		/// Draws the bounds of all objects in the tree visually for debugging.
-		/// Must be called from OnDrawGizmos externally. See also: DrawAllBounds.
+		/// Must be called from OnDrawGizmos externally. <seealso cref="DrawNodeBoundsGizmos"/>
 		/// </summary>
 		public void DrawObjectBoundsGizmos() {
 			_rootNode.DrawObjectBoundsGizmos();

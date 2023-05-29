@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Octrees {
@@ -34,28 +35,91 @@ namespace Octrees {
 			       | (offsetFromCenter.y > 0 ? (byte)OctreeAxisFlags.Y : 0)
 			       | (offsetFromCenter.z > 0 ? (byte)OctreeAxisFlags.Z : 0));
 		}
-
+		
+		public static readonly IReadOnlyDictionary<OctreeNodeSector,Vector3> SectorDirections = new Dictionary<OctreeNodeSector, Vector3>() {
+			{ OctreeNodeSector.LeftDownBack, new Vector3(-1, -1, -1) }, // x-, y-, z-
+			{ OctreeNodeSector.RightDownBack, new Vector3(1, -1, -1) }, // x+, y-, z-
+			{ OctreeNodeSector.LeftUpBack, new Vector3(-1, 1, -1) }, // x-, y+, z-
+			{ OctreeNodeSector.RightUpBack, new Vector3(1, 1, -1) }, // x+, y+, z-
+			{ OctreeNodeSector.LeftDownFront, new Vector3(-1, -1, 1) }, // x-, y-, z+
+			{ OctreeNodeSector.RightDownFront, new Vector3(1, -1, 1) }, // x+, y-, z+
+			{ OctreeNodeSector.LeftUpFront, new Vector3(-1, 1, 1) }, // x-, y+, z+
+			{ OctreeNodeSector.RightUpFront, new Vector3(1, 1, 1) } // x+, y+, z+
+		};
+		
 		public static Vector3 GetDirection(this OctreeNodeSector sector) {
-			switch (sector) {
-				case OctreeNodeSector.LeftDownBack: // x-, y-, z-
-					return new Vector3(-1, -1, -1);
-				case OctreeNodeSector.RightDownBack: // x+, y-, z-
-					return new Vector3(1, -1, -1);
-				case OctreeNodeSector.LeftUpBack: // x- y+, z-
-					return new Vector3(-1, 1, -1);
-				case OctreeNodeSector.RightUpBack: // x+, y+, z-
-					return new Vector3(1, 1, -1);
-				case OctreeNodeSector.LeftDownFront: // x-, y-, z+
-					return new Vector3(-1, -1, 1);
-				case OctreeNodeSector.RightDownFront: // x+, y-, z+
-					return new Vector3(1, -1, 1);
-				case OctreeNodeSector.LeftUpFront: // x-, y+, z+
-					return new Vector3(-1, 1, 1);
-				case OctreeNodeSector.RightUpFront: // x+, y+, z+
-					return new Vector3(1, 1, 1);
+			if (SectorDirections.TryGetValue(sector, out var dir)) {
+				return dir;
 			}
 			Debug.LogError("Invalid sector " + sector);
 			return Vector3.zero;
+		}
+		
+		/// <summary>
+		/// Returns the closest distance to the given ray from a given point.
+		/// </summary>
+		/// <param name="ray">The ray.</param>
+		/// <param name="point">The point to check distance from the ray.</param>
+		/// <returns>Squared distance from the point to the closest point of the ray.</returns>
+		public static float SqrDistanceToRay(Ray ray, Vector3 point) {
+			return Vector3.Cross(ray.direction, point - ray.origin).sqrMagnitude;
+		}
+		
+		/// <summary>
+		/// Gets all the corner points of the given bounds
+		/// </summary>
+		/// <param name="bounds">The bounds to get the corner points of</param>
+		/// <returns>An enumerable of the corner points of the bounds</returns>
+		public static IEnumerable<Vector3> GetBoundsCorners(Bounds bounds) {
+			Vector3 min = bounds.min;
+			Vector3 max = bounds.max;
+			// min-all, go from min to max z
+			yield return new Vector3(min.x, min.y, min.z); // x-, y-, z-
+			yield return new Vector3(max.x, min.y, min.z); // x+, y-, z-
+			yield return new Vector3(min.x, max.y, min.z); // x-, y+, z-
+			yield return new Vector3(max.x, max.y, min.z); // x+, y+, z-
+			yield return new Vector3(min.x, min.y, max.z); // x-, y-, z+
+			yield return new Vector3(max.x, min.y, max.z); // x+, y-, z+
+			yield return new Vector3(min.x, max.y, max.z); // x-, y+, z+
+			yield return new Vector3(max.x, max.y, max.z); // x+, y+, z+
+		}
+		
+		/// <summary>
+		/// Converts the given bounds to a bounds in viewport space
+		/// </summary>
+		/// <param name="bounds">The bounds to convert to viewport space</param>
+		/// <param name="camera">The camera providing the viewport</param>
+		/// <param name="convertPointToWorld">If the given bounds isn't already in world space, you can provide this method to convert its points to world space</param>
+		/// <returns>The converted bounds in viewport space</returns>
+		public static Bounds CalculateBoundsInViewport(in Bounds bounds, Camera camera, OctreeUtils.PointConverter convertPointToWorld) {
+			var viewportPoint = camera.WorldToViewportPoint(bounds.center);
+			float minX = viewportPoint.x;
+			float minY = viewportPoint.y;
+			float maxX = viewportPoint.x;
+			float maxY = viewportPoint.y;
+			float minZ = viewportPoint.z;
+			float maxZ = viewportPoint.z;
+			foreach (var point in GetBoundsCorners(bounds)) {
+				viewportPoint = camera.WorldToViewportPoint(convertPointToWorld?.Invoke(point) ?? point);
+				if (viewportPoint.x < minX) {
+					minX = viewportPoint.x;
+				} else if (viewportPoint.x > maxX) {
+					maxX = viewportPoint.x;
+				}
+				if (viewportPoint.y < minY) {
+					minY = viewportPoint.y;
+				} else if (viewportPoint.y > maxY) {
+					maxY = viewportPoint.y;
+				}
+				if (viewportPoint.z < minZ) {
+					minZ = viewportPoint.z;
+				} else if (viewportPoint.z > maxZ) {
+					maxZ = viewportPoint.z;
+				}
+			}
+			var viewportBounds = new Bounds();
+			viewportBounds.SetMinMax(min: new Vector3(minX, minY, minZ), max: new Vector3(maxX, maxY, maxZ));
+			return viewportBounds;
 		}
 		
 		#if UNITY_EDITOR

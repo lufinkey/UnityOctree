@@ -1,7 +1,5 @@
 ﻿using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
-using UnityEngine.Assertions;
 
 namespace Octrees
 {
@@ -18,204 +16,136 @@ namespace Octrees
 	// Originally written for my game Scraps (http://www.scrapsgame.com) but intended to be general-purpose.
 	// Copyright 2014 Nition, BSD licence (see LICENCE file). www.momentstudio.co.nz
 	// Unity-based, but could be adapted to work in pure C#
-	public class PointOctree<T>
-	{
-		// The total amount of objects currently in the tree
-		public int Count { get; private set; }
+	public class PointOctree<T> {
+		public struct NearbyEntry {
+			public T obj;
+			public Vector3 position;
+			public float sqrDistance;
 
-		// Root node of the octree
-		PointOctreeNode<T> rootNode;
-
+			public NearbyEntry(T obj, in Vector3 position, float sqrDistance) {
+				this.obj = obj;
+				this.position = position;
+				this.sqrDistance = sqrDistance;
+			}
+		}
+		
+		public delegate bool EntryFilter(T obj, Vector3 objPosition);
+		public delegate bool NodeFilter(in PointOctreeNode<T> node);
+		public delegate bool EntryFitnessCalculator(T obj, in Vector3 point, out float fitness);
+		
+		public const int DefaultMaxGrowAttempts = 20;
+		
 		// Size that the octree was on creation
-		readonly float initialSize;
+		public readonly float initialSize;
 
 		// Minimum side length that a node can be - essentially an alternative to having a max depth
-		readonly float minSize;
-
+		public readonly float minNodeSize;
+		
+		// Root node of the octree
+		private PointOctreeNode<T> _rootNode;
+		
 		/// <summary>
 		/// Constructor for the point octree.
 		/// </summary>
-		/// <param name="initialWorldSize">Size of the sides of the initial node. The octree will never shrink smaller than this.</param>
+		/// <param name="initialSize">Size of the sides of the initial node. The octree will never shrink smaller than this.</param>
 		/// <param name="initialWorldPos">Position of the centre of the initial node.</param>
 		/// <param name="minNodeSize">Nodes will stop splitting if the new nodes would be smaller than this.</param>
-		public PointOctree(float initialWorldSize, Vector3 initialWorldPos, float minNodeSize)
-		{
-			if (minNodeSize > initialWorldSize)
-			{
-				Debug.LogWarning("Minimum node size must be at least as big as the initial world size. Was: " +
-				                 minNodeSize + " Adjusted to: " + initialWorldSize);
-				minNodeSize = initialWorldSize;
+		public PointOctree(float initialSize, Vector3 initialWorldPos, float minNodeSize) {
+			if (minNodeSize > initialSize) {
+				Debug.LogWarning($"Minimum node size must be at least as big as the initial size. Was: {minNodeSize} Adjusted to: {initialSize}");
+				minNodeSize = initialSize;
 			}
-
-			Count = 0;
-			initialSize = initialWorldSize;
-			minSize = minNodeSize;
-			rootNode = new PointOctreeNode<T>(initialSize, minSize, initialWorldPos);
+			this.initialSize = initialSize;
+			this.minNodeSize = minNodeSize;
+			_rootNode = new PointOctreeNode<T>(this, initialWorldPos, initialSize);
 		}
-
-		// #### PUBLIC METHODS ####
-
+		
+		
+		
+		#region Properties
 		/// <summary>
-		/// Add an object.
+		/// The strict bounds of the root node of the octree
 		/// </summary>
-		/// <param name="obj">Object to add.</param>
-		/// <param name="objPos">Position of the object.</param>
-		public void Add(T obj, Vector3 objPos)
-		{
+		public Bounds bounds => _rootNode.bounds;
+		
+		/// <summary>
+		/// The number of objects in this octree
+		/// </summary>
+		public int Count => _rootNode.Count;
+		#endregion
+		
+		
+		
+		#region Add / Remove / Move / Access
+		/// <summary>
+		/// Gets all the objects in this octree
+		/// </summary>
+		public IEnumerable<T> GetAll() => _rootNode.GetAll();
+		
+		/// <summary>
+		/// Tells if the octree contains the given object
+		/// </summary>
+		/// <param name="obj">The object to check</param>
+		/// <returns>true if the given object is contained in the octree, false otherwise</returns>
+		public bool Contains(T obj) => _rootNode.Contains(obj);
+		
+		/// <summary>
+		/// Add an object to the octree, moving an existing entry if it already exists.
+		/// </summary>
+		/// <param name="obj">The object to add to the tree</param>
+		/// <param name="objPos">The position of the object</param>
+		/// <param name="maxGrowAttempts">The maximum number of times the octree should try to grow to encapsulate the given object</param>
+		/// <returns>true if the object could be added, false if it could not</returns>
+		public bool Add(T obj, Vector3 objPos, int maxGrowAttempts = DefaultMaxGrowAttempts) {
 			// Add object or expand the octree until it can be added
+			if (maxGrowAttempts == 0) {
+				return _rootNode.Add(obj, objPos);
+			}
 			int count = 0; // Safety check against infinite/excessive growth
-			while (!rootNode.Add(obj, objPos))
-			{
-				Grow(objPos - rootNode.Center);
-				if (++count > 20)
-				{
-					Debug.LogError("Aborted Add operation as it seemed to be going on forever (" + (count - 1) +
-					               ") attempts at growing the octree.");
-					return;
+			while (!_rootNode.Add(obj, objPos)) {
+				Grow(objPos - _rootNode.center);
+				count++;
+				if (count >= maxGrowAttempts) {
+					Debug.LogError($"Add operation took too long. ({count}) attempts at growing the octree.");
+					return false;
 				}
 			}
-
-			Count++;
+			return true;
 		}
-
+		
 		/// <summary>
-		/// Remove an object. Makes the assumption that the object only exists once in the tree.
+		/// Remove an object from the octree.
 		/// </summary>
-		/// <param name="obj">Object to remove.</param>
+		/// <param name="obj">The object to remove</param>
+		/// <param name="mergeIfAble">Controls whether octree nodes should get merged if they're able to be</param>
 		/// <returns>True if the object was removed successfully.</returns>
-		public bool Remove(T obj)
-		{
-			bool removed = rootNode.Remove(obj);
-
+		public bool Remove(T obj, bool mergeIfAble = true) {
+			bool removed = _rootNode.Remove(obj, isRoot:true, mergeIfAble:mergeIfAble);
 			// See if we can shrink the octree down now that we've removed the item
-			if (removed)
-			{
-				Count--;
-				Shrink();
+			if (removed && mergeIfAble) {
+				ShrinkIfPossible();
 			}
-
 			return removed;
 		}
-
-		/// <summary>
-		/// Removes the specified object at the given position. Makes the assumption that the object only exists once in the tree.
-		/// </summary>
-		/// <param name="obj">Object to remove.</param>
-		/// <param name="objPos">Position of the object.</param>
-		/// <returns>True if the object was removed successfully.</returns>
-		public bool Remove(T obj, Vector3 objPos)
-		{
-			bool removed = rootNode.Remove(obj, objPos);
-
-			// See if we can shrink the octree down now that we've removed the item
-			if (removed)
-			{
-				Count--;
-				Shrink();
-			}
-
-			return removed;
-		}
-
+		
+		// TODO add Move and AddOrMove operations
+		#endregion
+		
+		
+		
+		#region Search / Intersection
 		/// <summary>
 		/// Returns objects that are within <paramref name="maxDistance"/> of the specified ray.
 		/// If none, returns false. Uses supplied list for results.
 		/// </summary>
 		/// <param name="ray">The ray to compare distance to</param>
 		/// <param name="maxDistance">Maximum distance from the ray to consider</param>
-		/// <param name="nearBy">Pre-initialized list to populate</param>
-		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
+		/// <param name="nearBy">The list to populate with the nearby objects</param>
+		/// <param name="filter">Optionally filters objects to include (return true to include the object, false to not include it)</param>
 		/// <returns>True if items are found, false if not</returns>
-		public bool GetNearbyNonAlloc(in Ray ray, float maxDistance, List<T> nearBy, System.Predicate<T> filter = null)
-		{
-			nearBy.Clear();
-			rootNode.GetNearby(ray, maxDistance, nearBy, filter);
-			if (nearBy.Count > 0)
-				return true;
-			return false;
-		}
-
-		/// <summary>
-		/// Returns objects that are within <paramref name="maxDistance"/> of the specified ray.
-		/// If none, returns an empty array (not null).
-		/// </summary>
-		/// <param name="ray">The ray to compare distance to</param>
-		/// <param name="maxDistance">Maximum distance from the ray to consider.</param>
-		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
-		/// <returns>Objects within range.</returns>
-		public T[] GetNearby(in Ray ray, float maxDistance, System.Predicate<T> filter = null)
-		{
-			List<T> collidingWith = new List<T>();
-			rootNode.GetNearby(ray, maxDistance, collidingWith, filter);
-			return collidingWith.ToArray();
-		}
-
-		/// <summary>
-		/// Returns objects that are within <paramref name="maxDistance"/> of the specified position.
-		/// If none, returns an empty array (not null).
-		/// </summary>
-		/// <param name="position">The position to compare distances with</param>
-		/// <param name="maxDistance">Maximum distance from the position to consider.</param>
-		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
-		/// <returns>Objects within range.</returns>
-		public T[] GetNearby(in Vector3 position, float maxDistance, System.Predicate<T> filter = null)
-		{
-			List<T> collidingWith = new List<T>();
-			rootNode.GetNearby(position, maxDistance, collidingWith, filter);
-			return collidingWith.ToArray();
-		}
-
-		public void GetNearbyWithDistances(in Vector3 position, float maxDistance, List<ItemInfoWithDistance<T>> output, System.Predicate<T> filter = null)
-		{
-			rootNode.GetNearbyWithDistances(position, maxDistance, output, filter);
-		}
-		
-		// A stupid temp implementation of this thing.
-		public void GetNearbyN(Vector3 position, List<ItemInfoWithDistance<T>> output, int desiredCount, float startingDistance)
-		{
-			if (Count <= desiredCount)
-				return;
-			
-			float maxDistance = startingDistance;
-			while (true)
-			{
-				GetNearbyWithDistances(position, maxDistance, output);
-				if (output.Count >= desiredCount)
-					break;
-				maxDistance += startingDistance;
-				Debug.Log("Another iteration");
-			}
-		}
-		
-		// A stupid temp implementation of this thing.
-		public T GetClosest(in Vector3 position, float startingDistance = float.MaxValue, List<ItemInfoWithDistance<T>> cache = null)
-		{
-			Assert.IsTrue(Count > 0);
-			if (cache == null) {
-				cache = new List<ItemInfoWithDistance<T>>();
-			}
-			float maxDistance = startingDistance;
-			while (true)
-			{
-				GetNearbyWithDistances(position, maxDistance, cache);
-				if (cache.Count > 0)
-					break;
-				maxDistance *= 2;
-			}
-
-			int minIndex = -1;
-			float minDistance = float.PositiveInfinity;
-			for (int i = 0; i < cache.Count; i++)
-			{
-				float dist = cache[i].distance;
-				if (dist < minDistance)
-				{
-					minIndex = i;
-					minDistance = dist;
-				}
-			}
-
-			return cache[minIndex].obj;
+		public bool GetNearby(in Ray ray, float maxDistance, ref List<T> nearBy, EntryFilter filter = null) {
+			nearBy?.Clear();
+			return _rootNode.GetNearby(ray, maxDistance, ref nearBy, filter) > 0;
 		}
 		
 		/// <summary>
@@ -225,49 +155,113 @@ namespace Octrees
 		/// <param name="position">The position to compare distances with</param>
 		/// <param name="maxDistance">Maximum distance from the position to consider</param>
 		/// <param name="nearBy">Pre-initialized list to populate</param>
-		/// <param name="filter">Filter objects to include (return true to include the object, false to not include it)</param>
+		/// <param name="filter">Optionally filters objects to consider (return true to consider the object, false to not consider it)</param>
 		/// <returns>True if items are found, false if not</returns>
-		public bool GetNearbyNonAlloc(in Vector3 position, float maxDistance, List<T> nearBy, System.Predicate<T> filter = null)
-		{
-			nearBy.Clear();
-			rootNode.GetNearby(position, maxDistance, nearBy, filter);
-			if (nearBy.Count > 0)
-				return true;
-			return false;
+		public bool GetNearby(in Vector3 position, float maxDistance, ref List<T> nearBy, EntryFilter filter = null) {
+			nearBy?.Clear();
+			return _rootNode.GetNearby(position, maxDistance, ref nearBy, filter) > 0;
 		}
 		
 		/// <summary>
-		/// Finds the closest object in the octree using a given visibility and distance calculation method
+		/// Returns objects that are within <paramref name="maxDistance"/> of the specified position, including the objects distances.
+		/// If none, returns false. Uses supplied list for results.
 		/// </summary>
-		/// <param name="getPointDistance">Calculates the distance to the given point</param>
-		/// <param name="isBoundsVisible">Calculates if the given bounds are visible to this search</param>
-		/// <param name="filter">An optional filter method to only include certain objects</param>
-		/// <param name="closestObj">The closest object found in the Octree, or `default` if not found</param>
-		/// <param name="closestDistance">The square distance of the closest object to the origin (in 2D view space)</param>
+		/// <param name="position">The position to compare distance to</param>
+		/// <param name="maxDistance">Maximum distance from the given position to look for objects</param>
+		/// <param name="nearBy">The list to populate with the nearby objects</param>
+		/// <param name="filter">Optionally filters objects to consider (return true to consider the object, false to not consider it)</param>
+		/// <returns>True if items are found, false if not</returns>
+		public bool GetNearbyWithDistances(in Vector3 position, float maxDistance, ref List<NearbyEntry> nearBy, EntryFilter filter = null) {
+			nearBy?.Clear();
+			return _rootNode.GetNearbyWithDistances(position, maxDistance, ref nearBy, filter) > 0;
+		}
+		
+		// A stupid temp implementation of this thing.
+		public void GetNearbyN(Vector3 position, ref List<NearbyEntry> output, int desiredCount, float startingDistance) {
+			if (Count <= desiredCount)
+				return;
+			
+			float maxDistance = startingDistance;
+			while (true)
+			{
+				GetNearbyWithDistances(position, maxDistance, ref output);
+				if (output.Count >= desiredCount)
+					break;
+				maxDistance += startingDistance;
+				Debug.Log("Another iteration");
+			}
+		}
+		
+		// A stupid temp implementation of this thing.
+		public bool GetClosest(in Vector3 position, out T closestEntry, float startingSearchDistance = float.MaxValue, float maxSearchDistance = float.PositiveInfinity, List<NearbyEntry> cache = null) {
+			if (cache == null) {
+				cache = new List<NearbyEntry>();
+			}
+			// increase distance until we find any result
+			float searchDistance = startingSearchDistance;
+			bool lastIteration = false;
+			while (true) {
+				GetNearbyWithDistances(position, searchDistance, ref cache);
+				if (cache.Count > 0) {
+					break;
+				} else if (lastIteration) {
+					// no entries found in search radius
+					closestEntry = default;
+					return false;
+				}
+				searchDistance *= 2.0f;
+				if (searchDistance >= maxSearchDistance) {
+					searchDistance = maxSearchDistance;
+					lastIteration = true;
+				}
+			}
+			// find closest result
+			int minIndex = -1;
+			float minSqrDistance = float.PositiveInfinity;
+			for (int i = 0; i < cache.Count; i++) {
+				float sqrDist = cache[i].sqrDistance;
+				if (minIndex == -1 || sqrDist < minSqrDistance) {
+					minIndex = i;
+					minSqrDistance = sqrDist;
+				}
+			}
+			closestEntry = cache[minIndex].obj;
+			return true;
+		}
+		
+		/// <summary>
+		/// Finds the best matching object in the octree using a given fitness calculator and node filter
+		/// </summary>
+		/// <param name="fitnessCalculator">Calculates the "fitness" of entries (how similar it is to the desired result). Lower return values are ranked as more "fit".</param>
+		/// <param name="nodeFilter">Determines which nodes should be searched</param>
+		/// <param name="matchingObj">The closest match found in the Octree, or `default` if not found</param>
+		/// <param name="matchFitness">The calculated "fitness" value of the matching object</param>
+		/// <param name="filter">Optionally filters objects to consider (return true to consider the object, false to not consider it)</param>
 		/// <returns>true if an object could be found, false otherwise</returns>
-		public bool FindClosest(PointOctreeNode<T>.TryGetPointDistanceMethod getPointDistance, PointOctreeNode<T>.IsBoundsVisible isBoundsVisible, System.Predicate<T> filter, out T closestObj, out float closestDistance) {
-			return rootNode.FindClosest(getPointDistance, isBoundsVisible, filter, out closestObj, out closestDistance);
+		public bool FindBestMatch(EntryFitnessCalculator fitnessCalculator, NodeFilter nodeFilter, out T matchingObj, out float matchFitness, EntryFilter filter = null) {
+			return _rootNode.FindBestMatch(fitnessCalculator, nodeFilter, out matchingObj, out matchFitness, filter);
 		}
 		
 		/// <summary>
-		/// Finds the closest point in the given (2d) view direction
+		/// Finds the closest point in the given (2d) view direction relative to the given camera
 		/// </summary>
-		/// <param name="origin">A tree position to compare against</param>
-		/// <param name="viewDirection">The view direction to check in</param>
+		/// <param name="origin">A 3D position in tree-space to compare against</param>
+		/// <param name="viewDirection">The view direction to search (relative to the camera)</param>
 		/// <param name="minDotProduct">The minimum allowed dot product between the direction from the origin to an object and the view direction</param>
-		/// <param name="treeToWorld">Converts a tree position to a world position</param>
+		/// <param name="convertTreePointToWorld">Optionally converts a position in tree-space to world-space</param>
 		/// <param name="camera">The camera viewing the points</param>
-		/// <param name="filter">An optional filter method to only include certain objects</param>
 		/// <param name="closestObj">The closest object found in the Octree, or `default` if not found</param>
 		/// <param name="closestDistance">The square distance of the closest object to the origin (in 2D view space)</param>
+		/// <param name="filter">Optionally filters objects to consider (return true to consider the object, false to not consider it)</param>
 		/// <returns>true if an object could be found, false otherwise</returns>
-		public bool FindClosestInViewDirection(Vector3 origin, Vector2 viewDirection, float minDotProduct, System.Func<Vector3,Vector3> treeToWorld, Camera camera, System.Predicate<T> filter, out T closestObj, out float closestDistance) {
+		public bool FindClosestInViewDirection(Vector3 origin, Vector2 viewDirection, float minDotProduct, OctreeUtils.PointConverter convertTreePointToWorld, Camera camera, out T closestObj, out float closestDistance, EntryFilter filter = null) {
 			var cameraViewportRect = new Rect(0, 0, 1, 1);
 			viewDirection = viewDirection.normalized;
-			var originInViewport = camera.WorldToViewportPoint(treeToWorld?.Invoke(origin) ?? origin);
+			var originInViewport = camera.WorldToViewportPoint(convertTreePointToWorld?.Invoke(origin) ?? origin);
 			var originInViewport2D = new Vector2(originInViewport.x, originInViewport.y);
-			PointOctreeNode<T>.TryGetPointDistanceMethod getPointDistance = (Vector3 objTreePoint, out float distance) => {
-				var viewportPoint = camera.WorldToViewportPoint(treeToWorld?.Invoke(objTreePoint) ?? objTreePoint);
+			// fitness will be the square 2D distance from the given origin to the object position
+			EntryFitnessCalculator fitnessCalculator = (T _, in Vector3 objPosition, out float distance) => {
+				var viewportPoint = camera.WorldToViewportPoint(convertTreePointToWorld?.Invoke(objPosition) ?? objPosition);
 				if (viewportPoint.z <= 0 || viewportPoint.x < 0 || viewportPoint.x > 1 || viewportPoint.y < 0 || viewportPoint.y > 1) {
 					distance = float.MaxValue;
 					return false;
@@ -282,27 +276,31 @@ namespace Octrees
 				distance = pointDirection2D.sqrMagnitude;
 				return true;
 			};
-			PointOctreeNode<T>.IsBoundsVisible isBoundsVisible = (bounds) => {
-				var boundsInViewport = GetBoundsViewportBounds(bounds, camera, treeToWorld);
+			// filter bounds outside the viewport
+			NodeFilter boundsFilter = (in PointOctreeNode<T> node) => {
+				var boundsInViewport = OctreeUtils.CalculateBoundsInViewport(node.bounds, camera, convertTreePointToWorld);
 				var viewportBoundsMin = boundsInViewport.min;
 				var viewportBoundsMax = boundsInViewport.max;
-				if (viewportBoundsMin.z <= 0 && viewportBoundsMax.z <= 0) {
+				if (viewportBoundsMax.z <= 0) {
 					return false;
 				}
+				// get the 2D rectangle for the checking bounds
 				var rectInViewport = Rect.MinMaxRect(viewportBoundsMin.x, viewportBoundsMin.y, viewportBoundsMax.x, viewportBoundsMax.y);
 				if (!cameraViewportRect.Overlaps(rectInViewport)) {
 					return false;
 				}
+				// if rectangle contains the origin, we should check these bounds
 				if (rectInViewport.Contains(originInViewport2D)) {
 					return true;
 				}
+				// gets the closest point of the 
 				var closestPoint = GetClosestEdgePoint(rectInViewport, origin);
 				var pointDirection2D = (closestPoint - originInViewport2D);
 				float dotProduct = Vector2.Dot(viewDirection, pointDirection2D.normalized);
 				if (dotProduct >= minDotProduct) {
 					return true;
 				}
-				foreach (var point2D in GetRectPoints(rectInViewport)) {
+				foreach (var point2D in GetRectComparisonPoints(rectInViewport)) {
 					pointDirection2D = (point2D - originInViewport2D);
 					dotProduct = Vector2.Dot(viewDirection, pointDirection2D.normalized);
 					if (dotProduct >= minDotProduct) {
@@ -311,10 +309,10 @@ namespace Octrees
 				}
 				return false;
 			};
-			return FindClosest(getPointDistance, isBoundsVisible, filter, out closestObj, out closestDistance);
+			return FindBestMatch(fitnessCalculator, boundsFilter, out closestObj, out closestDistance, filter);
 		}
 		
-		public static IEnumerable<Vector2> GetRectPoints(Rect rect) {
+		public static IEnumerable<Vector2> GetRectComparisonPoints(Rect rect) {
 			Vector2 min = rect.min;
 			Vector2 max = rect.max;
 			Vector2 topLeft = min;
@@ -358,133 +356,62 @@ namespace Octrees
 				return new Vector2(clampedPoint.x, maxY);
 			}
 		}
+		#endregion
 		
-		private static IEnumerable<Vector3> GetBoundsCorners(Bounds bounds) {
-			Vector3 min = bounds.min;
-			Vector3 max = bounds.max;
-			// min-all, go from min to max z
-			yield return new Vector3(min.x, min.y, min.z);
-			yield return new Vector3(min.x, min.y, max.z);
-			yield return new Vector3(min.x, max.y, min.z);
-			yield return new Vector3(min.x, max.y, max.z);
-			yield return new Vector3(max.x, min.y, min.z);
-			yield return new Vector3(max.x, min.y, max.z);
-			yield return new Vector3(max.x, max.y, min.z);
-			yield return new Vector3(max.x, max.y, max.z);
-		}
 		
-		private static Bounds GetBoundsViewportBounds(Bounds bounds, Camera camera, System.Func<Vector3,Vector3> treeToWorld) {
-			var viewportPoint = camera.WorldToViewportPoint(bounds.center);
-			float minX = viewportPoint.x;
-			float minY = viewportPoint.y;
-			float maxX = viewportPoint.x;
-			float maxY = viewportPoint.y;
-			float minZ = viewportPoint.z;
-			float maxZ = viewportPoint.z;
-			foreach (var point in GetBoundsCorners(bounds)) {
-				viewportPoint = camera.WorldToViewportPoint(treeToWorld?.Invoke(point) ?? point);
-				if (viewportPoint.x < minX) {
-					minX = viewportPoint.x;
-				} else if (viewportPoint.x > maxX) {
-					maxX = viewportPoint.x;
-				}
-				if (viewportPoint.y < minY) {
-					minY = viewportPoint.y;
-				} else if (viewportPoint.y > maxY) {
-					maxY = viewportPoint.y;
-				}
-				if (viewportPoint.z < minZ) {
-					minZ = viewportPoint.z;
-				} else if (viewportPoint.z > maxZ) {
-					maxZ = viewportPoint.z;
-				}
-			}
-			var viewportBounds = new Bounds();
-			viewportBounds.SetMinMax(min: new Vector3(minX, minY, minZ), max: new Vector3(maxX, maxY, maxZ));
-			return viewportBounds;
-		}
 		
-		/// <summary>
-		/// Return all objects in the tree.
-		/// If none, returns an empty array (not null).
-		/// </summary>
-		/// <returns>All objects.</returns>
-		public ICollection<T> GetAll()
-		{
-			List<T> objects = new List<T>(Count);
-			rootNode.GetAll(objects);
-			return objects;
-		}
-
-		/// <summary>
-		/// Draws node boundaries visually for debugging.
-		/// Must be called from OnDrawGizmos externally. See also: DrawAllObjects.
-		/// </summary>
-		public void DrawAllBounds()
-		{
-			rootNode.DrawAllBounds();
-		}
-
-		/// <summary>
-		/// Draws the bounds of all objects in the tree visually for debugging.
-		/// Must be called from OnDrawGizmos externally. See also: DrawAllBounds.
-		/// </summary>
-		public void DrawAllObjects()
-		{
-			rootNode.DrawAllObjects();
-		}
-
-		// #### PRIVATE METHODS ####
-
+		#region Node Manipulation
 		/// <summary>
 		/// Grow the octree to fit in all objects.
 		/// </summary>
 		/// <param name="direction">Direction to grow.</param>
-		void Grow(Vector3 direction)
-		{
+		public void Grow(Vector3 direction) {
 			int xDirection = direction.x >= 0 ? 1 : -1;
 			int yDirection = direction.y >= 0 ? 1 : -1;
 			int zDirection = direction.z >= 0 ? 1 : -1;
-			PointOctreeNode<T> oldRoot = rootNode;
-			float half = rootNode.SideLength / 2;
-			float newLength = rootNode.SideLength * 2;
-			Vector3 newCenter = rootNode.Center + new Vector3(xDirection * half, yDirection * half, zDirection * half);
-
+			var oldRoot = _rootNode;
+			float halfLen = oldRoot.baseLength / 2.0f;
+			float newLength = oldRoot.baseLength * 2.0f;
+			Vector3 newCenter = oldRoot.center + new Vector3(xDirection * halfLen, yDirection * halfLen, zDirection * halfLen);
 			// Create a new, bigger octree root node
-			rootNode = new PointOctreeNode<T>(newLength, minSize, newCenter);
-
-			if (oldRoot.HasAnyObjects())
-			{
+			var newRootNode = new PointOctreeNode<T>(this, newCenter, newLength);
+			if (oldRoot.HasAnyObjects()) {
 				// Create 7 new octree children to go with the old root as children of the new root
-				int rootPos = rootNode.BestFitChild(oldRoot.Center);
-				PointOctreeNode<T>[] children = new PointOctreeNode<T>[8];
-				for (int i = 0; i < 8; i++)
-				{
-					if (i == rootPos)
-					{
-						children[i] = oldRoot;
-					}
-					else
-					{
-						xDirection = i % 2 == 0 ? -1 : 1;
-						yDirection = i > 3 ? -1 : 1;
-						zDirection = (i < 2 || (i > 3 && i < 6)) ? -1 : 1;
-						children[i] = new PointOctreeNode<T>(oldRoot.SideLength, minSize,
-							newCenter + new Vector3(xDirection * half, yDirection * half, zDirection * half));
-					}
-				}
-
+				var rootSector = OctreeUtils.GetSector(oldRoot.center - newCenter);
+				var children = new PointOctreeNode<T>[OctreeUtils.SubdivideCount];
+				children[(int)rootSector] = oldRoot;
 				// Attach the new children to the new root node
-				rootNode.SetChildren(children);
+				newRootNode.SetChildren(children);
 			}
+			_rootNode = newRootNode;
 		}
-
+		
 		/// <summary>
 		/// Shrink the octree if possible, else leave it the same.
 		/// </summary>
-		void Shrink()
-		{
-			rootNode = rootNode.ShrinkIfPossible(initialSize);
+		void ShrinkIfPossible() {
+			_rootNode = _rootNode.ShrinkIfPossible(initialSize);
 		}
+		#endregion
+		
+		
+		
+		#region Gizmos / Debug Draw
+		/// <summary>
+		/// Draws node boundaries visually for debugging.
+		/// Must be called from OnDrawGizmos externally. <seealso cref="DrawObjectPositionsGizmos"/>
+		/// </summary>
+		public void DrawNodeBoundsGizmos() {
+			_rootNode.DrawNodeBoundsGizmos();
+		}
+		
+		/// <summary>
+		/// Draws the positions of all objects in the tree visually for debugging.
+		/// Must be called from OnDrawGizmos externally. <seealso cref="DrawNodeBoundsGizmos"/>
+		/// </summary>
+		public void DrawObjectPositionsGizmos() {
+			_rootNode.DrawObjectPositionsGizmos();
+		}
+		#endregion
 	}
 }
